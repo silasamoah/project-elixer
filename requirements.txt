@@ -53,6 +53,8 @@ fpdf2>=2.7.0
 python-dotenv>=1.0.0
 werkzeug>=3.0.0
 
+prometheus_client
+
 # --- Google Gemini (via custom integration) ---
 # gemini_integration.py is a local wrapper around the REST API;
 # no extra PyPI package required beyond `requests`.

@@ -2185,7 +2185,7 @@ def build_memory_context_with_name(query: str = None):
                 "Do not reference or use their name in responses."
             )
         elif name:
-            parts.append(f"The user's name is {name}. Always address them by name.")
+            parts.append(f"The user's name is {name}. Use their name only when it feels natural, such as in greetings — not in every response.")
 
         # Get standard user context (preferences, interests, etc.)
         user_context = build_user_context_for_prompt()
