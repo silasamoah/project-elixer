@@ -1,0 +1,42 @@
+# --- Core ML / AI ---
+torch
+numpy
+sentence-transformers
+transformers
+accelerate
+
+# --- PDF & Text Processing ---
+PyPDF2
+pypdf
+nltk
+rake-nltk
+
+# --- LLaMA local model ---
+llama-cpp-python
+
+# --- Web / API Tools ---
+requests
+beautifulsoup4
+lxml
+
+
+# --- Flask API ---
+flask
+flask-cors
+werkzeug
+
+# --- LangChain (split packages) ---
+langchain
+langchain-community
+langchain-text-splitters
+
+# --- Vector store (optional but used by many setups) ---
+chromadb
+
+# --- Utility ---
+python-dotenv
+fpdf
+
+waitress
+prometheus_client
+edge-tts

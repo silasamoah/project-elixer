@@ -1,0 +1,51 @@
+#---------- Production Mode ------------
+run setup in directory to creat venv and install requirements
+
+pip install -r requirements.txt
+pip install -r requirements_rag.txt
+
+python download_nltk_data
+
+double click 'START.bat' to start in production mode or python flask_server.py for development
+
+# 2. Configure
+Edit .env: set GEMINI_API_KEY if not already set
+
+#---------------------------------
+
+#------------- Manual venv setup ----------
+python -m venv venv
+venv\Scripts\activate
+#------------------------------------------
+
+replace imoji with emoji system.txt for smart detection
+
+#-------- For OCR -------------
+Download and install the Tesseract binary for Windows:
+
+Go to: https://github.com/UB-Mannheim/tesseract/wiki
+#------------------------------
+
+# Access:
+# - Your PC: http://localhost:5000/
+# - Other devices: http://hostip:5000
+
+"""
+GEMINI USAGE EXAMPLES:
+
+1. One-time Gemini use:
+   User: "use gemini: what is quantum computing?"
+   → Uses Gemini for this query only
+
+2. Enable Gemini globally:
+   User: "/gemini on"
+   → All subsequent queries use Gemini
+   
+3. Disable Gemini:
+   User: "/gemini off"
+   → Back to local LLM
+
+4. Check status:
+   User: "/gemini status"
+   → Shows which model is active
+

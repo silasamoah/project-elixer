@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>User Profile Manager</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        min-height: 100vh;
+        padding: 20px;
+      }
+
+      .container {
+        max-width: 800px;
+        margin: 0 auto;
+        background: white;
+        border-radius: 20px;
+        padding: 30px;
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+      }
+
+      h1 {
+        color: #333;
+        margin-bottom: 10px;
+        font-size: 32px;
+      }
+
+      .subtitle {
+        color: #666;
+        margin-bottom: 30px;
+        font-size: 14px;
+      }
+
+      .section {
+        margin-bottom: 30px;
+        padding: 20px;
+        background: #f8f9fa;
+        border-radius: 12px;
+      }
+
+      .section h2 {
+        color: #667eea;
+        margin-bottom: 15px;
+        font-size: 20px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .input-group {
+        margin-bottom: 15px;
+      }
+
+      label {
+        display: block;
+        margin-bottom: 5px;
+        color: #555;
+        font-weight: 600;
+        font-size: 14px;
+      }
+
+      input[type="text"],
+      input[type="email"],
+      select,
+      textarea {
+        width: 100%;
+        padding: 12px;
+        border: 2px solid #e0e0e0;
+        border-radius: 8px;
+        font-size: 14px;
+        transition: border-color 0.3s;
+      }
+
+      input:focus,
+      select:focus,
+      textarea:focus {
+        outline: none;
+        border-color: #667eea;
+      }
+
+      .button {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        border: none;
+        padding: 12px 24px;
+        border-radius: 8px;
+        font-size: 14px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: transform 0.2s, box-shadow 0.2s;
+      }
+
+      .button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+      }
+
+      .button:active {
+        transform: translateY(0);
+      }
+
+      .button-secondary {
+        background: #6c757d;
+      }
+
+      .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: 15px;
+        margin-top: 15px;
+      }
+
+      .stat-card {
+        background: white;
+        padding: 15px;
+        border-radius: 8px;
+        text-align: center;
+      }
+
+      .stat-value {
+        font-size: 28px;
+        font-weight: bold;
+        color: #667eea;
+      }
+
+      .stat-label {
+        font-size: 12px;
+        color: #666;
+        margin-top: 5px;
+      }
+
+      .chip {
+        display: inline-block;
+        background: #667eea;
+        color: white;
+        padding: 6px 12px;
+        border-radius: 20px;
+        font-size: 12px;
+        margin: 5px 5px 5px 0;
+      }
+
+      .chip-input-wrapper {
+        display: flex;
+        gap: 10px;
+        margin-top: 10px;
+      }
+
+      .chip-input {
+        flex: 1;
+      }
+
+      .chips-container {
+        margin-top: 10px;
+      }
+
+      .success-message {
+        background: #d4edda;
+        color: #155724;
+        padding: 12px;
+        border-radius: 8px;
+        margin-bottom: 20px;
+        display: none;
+      }
+
+      .error-message {
+        background: #f8d7da;
+        color: #721c24;
+        padding: 12px;
+        border-radius: 8px;
+        margin-bottom: 20px;
+        display: none;
+      }
+
+      .preference-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 15px;
+      }
+
+      @media (max-width: 600px) {
+        .preference-row {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>👤 User Profile</h1>
+      <p class="subtitle">Manage your personal information and preferences</p>
+
+      <div id="successMessage" class="success-message"></div>
+      <div id="errorMessage" class="error-message"></div>
+
+      <!-- Basic Info Section -->
+      <div class="section">
+        <h2>📝 Basic Information</h2>
+        <div class="input-group">
+          <label>Name</label>
+          <input type="text" id="userName" placeholder="Enter your name" />
+        </div>
+        <div class="input-group">
+          <label>Email</label>
+          <input
+            type="email"
+            id="userEmail"
+            placeholder="Enter your email (optional)"
+          />
+        </div>
+        <button class="button" onclick="saveBasicInfo()">
+          Save Basic Info
+        </button>
+      </div>
+
+      <!-- Statistics Section -->
+      <div class="section">
+        <h2>📊 Your Statistics</h2>
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-value" id="totalQuestions">0</div>
+            <div class="stat-label">Questions Asked</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value" id="sessionCount">0</div>
+            <div class="stat-label">Sessions</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value" id="memberSince">-</div>
+            <div class="stat-label">Member Since</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Preferences Section -->
+      <div class="section">
+        <h2>⚙️ Preferences</h2>
+        <div class="preference-row">
+          <div class="input-group">
+            <label>Response Style</label>
+            <select id="responseStyle">
+              <option value="concise">Concise - Brief answers</option>
+              <option value="balanced">Balanced - Standard</option>
+              <option value="detailed">Detailed - Thorough</option>
+            </select>
+          </div>
+          <div class="input-group">
+            <label>Expertise Level</label>
+            <select id="expertiseLevel">
+              <option value="beginner">Beginner</option>
+              <option value="intermediate">Intermediate</option>
+              <option value="advanced">Advanced</option>
+            </select>
+          </div>
+        </div>
+        <div class="preference-row">
+          <div class="input-group">
+            <label>Code Style</label>
+            <select id="codeStyle">
+              <option value="minimal">Minimal - No comments</option>
+              <option value="commented">Commented - Standard</option>
+              <option value="verbose">Verbose - Detailed</option>
+            </select>
+          </div>
+          <div class="input-group">
+            <label>Preferred Language</label>
+            <select id="preferredLanguage">
+              <option value="python">Python</option>
+              <option value="javascript">JavaScript</option>
+              <option value="java">Java</option>
+              <option value="cpp">C++</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+        </div>
+        <button class="button" onclick="savePreferences()">
+          Save Preferences
+        </button>
+      </div>
+
+      <!-- Interests Section -->
+      <div class="section">
+        <h2>🎯 Your Interests</h2>
+        <div class="chips-container" id="interestsContainer"></div>
+        <div class="chip-input-wrapper">
+          <input
+            type="text"
+            id="newInterest"
+            class="chip-input"
+            placeholder="Add an interest (e.g., Machine Learning)"
+          />
+          <button class="button" onclick="addInterest()">Add</button>
+        </div>
+      </div>
+
+      <!-- Learning Goals Section -->
+      <div class="section">
+        <h2>🎓 Learning Goals</h2>
+        <div class="chips-container" id="goalsContainer"></div>
+        <div class="chip-input-wrapper">
+          <input
+            type="text"
+            id="newGoal"
+            class="chip-input"
+            placeholder="Add a learning goal"
+          />
+          <button class="button" onclick="addGoal()">Add</button>
+        </div>
+      </div>
+
+      <!-- Actions -->
+      <div style="display: flex; gap: 10px; margin-top: 20px">
+        <button class="button" onclick="loadProfile()">
+          🔄 Refresh Profile
+        </button>
+        <button class="button button-secondary" onclick="clearHistory()">
+          🗑️ Clear Chat History
+        </button>
+      </div>
+    </div>
+
+    <script>
+      const API_URL = "";
+
+      // Load profile on page load
+      window.addEventListener("load", loadProfile);
+
+      function showSuccess(message) {
+        const el = document.getElementById("successMessage");
+        el.textContent = message;
+        el.style.display = "block";
+        setTimeout(() => (el.style.display = "none"), 3000);
+      }
+
+      function showError(message) {
+        const el = document.getElementById("errorMessage");
+        el.textContent = message;
+        el.style.display = "block";
+        setTimeout(() => (el.style.display = "none"), 5000);
+      }
+
+      async function loadProfile() {
+        try {
+          const res = await fetch("/api/user/profile");
+          if (!res.ok) return;
+
+          const profileData = await res.json();
+
+          if (profileData.hasProfile) {
+            const profile = profileData.profile;
+
+            // Basic info
+            document.getElementById("userName").value = profile.name || "";
+            document.getElementById("userEmail").value = profile.email || "";
+
+            // Stats
+            const stats = profile.interaction_stats || {};
+            document.getElementById("totalQuestions").textContent =
+              stats.total_questions || 0;
+            document.getElementById("sessionCount").textContent =
+              stats.session_count || 0;
+
+            if (stats.first_seen) {
+              const date = new Date(stats.first_seen);
+              document.getElementById("memberSince").textContent =
+                date.toLocaleDateString();
+            }
+
+            // Preferences
+            const prefs = profile.preferences || {};
+            document.getElementById("responseStyle").value =
+              prefs.response_style || "balanced";
+            document.getElementById("expertiseLevel").value =
+              prefs.expertise_level || "intermediate";
+            document.getElementById("codeStyle").value =
+              prefs.code_style || "commented";
+            document.getElementById("preferredLanguage").value =
+              prefs.preferred_language || "python";
+
+            renderChips(profile.interests || [], "interestsContainer");
+            renderChips(profile.learning_goals || [], "goalsContainer");
+          }
+        } catch (error) {
+          showError("Failed to load profile: " + error.message);
+        }
+      }
+
+      function renderChips(items, containerId) {
+        const container = document.getElementById(containerId);
+        container.innerHTML = items
+          .map((item) => `<span class="chip">${item}</span>`)
+          .join("");
+      }
+
+      async function saveBasicInfo() {
+        try {
+          const name = document.getElementById("userName").value;
+          const email = document.getElementById("userEmail").value;
+
+          const response = await fetch(`${API_URL}/api/user/profile`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name, email }),
+          });
+
+          const data = await response.json();
+
+          if (data.success) {
+            showSuccess("Basic info saved successfully!");
+            loadProfile();
+          } else {
+            showError(data.error || "Failed to save");
+          }
+        } catch (error) {
+          showError("Error: " + error.message);
+        }
+      }
+
+      async function savePreferences() {
+        try {
+          const preferences = {
+            response_style: document.getElementById("responseStyle").value,
+            expertise_level: document.getElementById("expertiseLevel").value,
+            code_style: document.getElementById("codeStyle").value,
+            preferred_language:
+              document.getElementById("preferredLanguage").value,
+          };
+
+          const response = await fetch(`${API_URL}/api/user/preferences`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(preferences),
+          });
+
+          const data = await response.json();
+
+          if (data.success) {
+            showSuccess("Preferences saved successfully!");
+          } else {
+            showError(data.error || "Failed to save");
+          }
+        } catch (error) {
+          showError("Error: " + error.message);
+        }
+      }
+
+      async function addInterest() {
+        const input = document.getElementById("newInterest");
+        const interest = input.value.trim();
+
+        if (!interest) return;
+
+        try {
+          const response = await fetch(`${API_URL}/api/user/interests`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ interest }),
+          });
+
+          const data = await response.json();
+
+          if (data.success) {
+            input.value = "";
+            renderChips(data.interests, "interestsContainer");
+            showSuccess("Interest added!");
+          } else {
+            showError(data.error || "Failed to add");
+          }
+        } catch (error) {
+          showError("Error: " + error.message);
+        }
+      }
+
+      async function addGoal() {
+        const input = document.getElementById("newGoal");
+        const goal = input.value.trim();
+
+        if (!goal) return;
+
+        try {
+          const response = await fetch(`${API_URL}/api/user/goals`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ goal }),
+          });
+
+          const data = await response.json();
+
+          if (data.success) {
+            input.value = "";
+            renderChips(data.goals, "goalsContainer");
+            showSuccess("Goal added!");
+          } else {
+            showError(data.error || "Failed to add");
+          }
+        } catch (error) {
+          showError("Error: " + error.message);
+        }
+      }
+
+      async function clearHistory() {
+        if (!confirm("Are you sure you want to clear your chat history?")) {
+          return;
+        }
+
+        try {
+          const response = await fetch(`${API_URL}/api/user/history/clear`, {
+            method: "POST",
+          });
+
+          const data = await response.json();
+
+          if (data.success) {
+            showSuccess("Chat history cleared!");
+            loadProfile();
+          } else {
+            showError(data.error || "Failed to clear");
+          }
+        } catch (error) {
+          showError("Error: " + error.message);
+        }
+      }
+    </script>
+  </body>
+</html>

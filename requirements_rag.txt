@@ -1,0 +1,27 @@
+# Core dependencies
+faiss-cpu>=1.7.4
+rank-bm25>=0.2.2
+sentence-transformers>=2.2.2
+numpy>=1.24.0
+torch>=2.0.0
+
+# Flask server
+flask>=2.3.0
+flask-cors>=4.0.0
+
+# PDF processing
+PyPDF2>=3.0.0
+langchain>=0.1.0
+langchain-community>=0.0.10
+
+# NLP
+nltk>=3.8.1
+
+# LLM
+llama-cpp-python>=0.2.0
+
+# Utilities
+rake-nltk>=1.0.6
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+fpdf>=1.7.2

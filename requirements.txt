@@ -1,0 +1,58 @@
+# ============================================================
+# Project Elixer — Python Dependencies
+# Install with: pip install -r requirements.txt
+# ============================================================
+
+# --- Web Framework ---
+flask>=3.0.0
+flask-cors>=4.0.0
+
+# --- LLM (local inference) ---
+llama-cpp-python>=0.2.90        # CPU build; for GPU add: CMAKE_ARGS="-DLLAMA_CUDA=on"
+
+# --- Embeddings ---
+sentence-transformers>=2.7.0
+torch>=2.2.0                    # CPU-only; use torch+cu121 wheel for GPU
+
+# --- RAG & Vector Search ---
+faiss-cpu>=1.8.0                # swap for faiss-gpu if you have a CUDA GPU
+langchain>=0.2.0
+langchain-community>=0.2.0
+langchain-text-splitters>=0.2.0
+
+# --- PDF Processing ---
+PyPDF2>=3.0.0
+pypdf>=4.0.0
+pdfplumber>=0.11.0
+
+# --- NLP utilities ---
+nltk>=3.8.0
+rake-nltk>=1.0.6
+scikit-learn>=1.4.0
+
+# --- Web Search ---
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+
+# --- OCR (optional — comment out if not needed) ---
+pytesseract>=0.3.10             # also requires Tesseract binary on your system
+Pillow>=10.0.0
+pdf2image>=1.17.0
+
+# --- TTS (optional) ---
+# pyttsx3>=2.90                 # system TTS
+# gTTS>=2.5.0                   # Google TTS (needs internet)
+# edge-tts>=6.1.0               # Microsoft Edge TTS (needs internet)
+
+# --- Personality system ---
+# (ai_personality_v6_final_production is a local module — not on PyPI)
+
+# --- Data / utilities ---
+numpy>=1.26.0
+fpdf2>=2.7.0
+python-dotenv>=1.0.0
+werkzeug>=3.0.0
+
+# --- Google Gemini (via custom integration) ---
+# gemini_integration.py is a local wrapper around the REST API;
+# no extra PyPI package required beyond `requests`.
