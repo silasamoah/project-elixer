@@ -51,7 +51,7 @@ Recommended: [Llama-3.1-8B-Instruct-Q4_K_M.gguf](https://huggingface.co/bartowsk
 ### 5. Download the embedding model (first run only)
 ```bash
 # Temporarily allow HuggingFace downloads
-HF_HUB_OFFLINE=0 python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2', cache_folder='./hf_cache')"
+$env:HF_HUB_OFFLINE=0; python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2', cache_folder='./hf_cache')"
 ```
 
 ### 6. Run the server

@@ -43,10 +43,10 @@ models--*/
 # ============================================================
 # Piper TTS — binaries & voice models
 # ============================================================
-piper/
-voices/
-*.onnx
-*.onnx.json
+#piper/
+#voices/
+#*.onnx
+#*.onnx.json
 
 # ============================================================
 # Application Cache & Runtime Data
@@ -76,10 +76,7 @@ saved_chats.json
 Thumbs.db
 desktop.ini
 
-# ============================================================
-# Static libs (serve from CDN in production)
-# ============================================================
-static/libs/
+
 
 # ============================================================
 # Exports & temp uploads

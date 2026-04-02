@@ -23,7 +23,7 @@ GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
 MODEL_PATH: str = os.getenv(
     "MODEL_PATH",
     # Sensible default — override in .env
-    str(Path.home() / "models" / "Llama-3.1-8B-Instruct-Q4_K_M.gguf"),
+    str(Path.home() / "Downloads" / "Llama-3.1-8B-Instruct-Q4_K_M.gguf"),
 )
 
 # ============================================================

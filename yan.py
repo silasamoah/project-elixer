@@ -24,6 +24,7 @@ import logging
 from config import MODEL_PATH, PIPER_EXECUTABLE, PIPER_VOICES_DIR, PIPER_MODELS
 
 from typing import List, Tuple, Optional
+
 ##
 import os
 import logging
@@ -42,12 +43,13 @@ from pathlib import Path
 # ============================================================
 from ai_personality_v6_final_production import (
     EnhancedPersonalityV6Final,
-    Config as PersonalityConfig
+    Config as PersonalityConfig,
 )
 
 # Initialize production personality system (if using memory mode)
 # For Redis mode, see configuration below
 personality_system = None
+
 
 def init_personality_system():
     """Initialize personality system - call once at startup"""
@@ -55,9 +57,10 @@ def init_personality_system():
     if personality_system is None:
         # Configure for memory mode (no Redis required)
         import os
+
         os.environ["STORAGE_BACKEND"] = "memory"  # or "redis" if you have Redis
         os.environ["EVENT_STREAM_BACKEND"] = "memory"  # or "redis_streams"
-        
+
         personality_system = EnhancedPersonalityV6Final()
     return personality_system
 
@@ -67,17 +70,17 @@ def init_personality_system():
 # ============================================================
 class EnhancedPersonality:
     """Enhanced personality system with production v6 integration"""
-    
+
     def __init__(self):
         """Initialize with production personality system"""
         global personality_system
         if personality_system is None:
             init_personality_system()
-        
+
         self.personality_system = personality_system
         # Add reference to profile manager for easy access
         self.profile_manager = personality_system.profile_manager
-    
+
     def build_system_prompt(self, user_id: str) -> str:
         """
         Build dynamic system prompt based on personality.
@@ -85,78 +88,79 @@ class EnhancedPersonality:
         """
         # Delegate to production system for consistency
         return self.personality_system.build_system_prompt(user_id)
-    
-    def process_response(self, user_id: str, user_input: str, base_response: str) -> str:
+
+    def process_response(
+        self, user_id: str, user_input: str, base_response: str
+    ) -> str:
         """
         Process response with full personality adaptation including playfulness.
-        
+
         Features:
         - Semantic analysis for warmth, verbosity, and playfulness
         - Context-aware playfulness gating (suppresses during distress)
         - Cheeky frequency tracking with auto-adjustment
         - Time-based decay support
-        
+
         Args:
             user_id: User identifier
             user_input: User's input text
             base_response: Base response to return
-        
+
         Returns:
             Base response (personality affects next response via system prompt)
         """
         try:
             # Get current profile (with optional decay on read)
             profile = self.profile_manager.get_profile(user_id, apply_decay=True)
-            
+
             # Generate embedding for semantic analysis
             query_embedding = self.personality_system.embedding.encode(user_input)
-            
+
             # Match against all prototypes
             similarities = self.personality_system.embedding.match_against_prototypes(
-                query_embedding,
-                self.personality_system.prototypes
+                query_embedding, self.personality_system.prototypes
             )
-            
+
             # Initialize deltas
             delta_warmth = 0.0
             delta_verbosity = 0.0
             delta_playfulness = 0.0
-            
+
             # ============================================================
             # WARMTH ADJUSTMENTS
             # ============================================================
             # Increase warmth on gratitude/appreciation
             if similarities.get("gratitude", 0) > 0.75:
                 delta_warmth = 0.01
-            
+
             # Decrease warmth on cold/formal language
             if similarities.get("formal", 0) > 0.75:
                 delta_warmth = -0.005
-            
+
             # ============================================================
             # VERBOSITY ADJUSTMENTS
             # ============================================================
             # Increase verbosity for detailed requests
             if similarities.get("detailed_request", 0) > 0.75:
                 delta_verbosity = 0.02
-            
+
             # Decrease verbosity for brief requests
             if similarities.get("brief_request", 0) > 0.75:
                 delta_verbosity = -0.02
-            
+
             # Increase verbosity for confusion (need more explanation)
             if similarities.get("confusion", 0) > 0.75:
                 delta_verbosity = 0.015
-            
+
             # ============================================================
             # PLAYFULNESS ADJUSTMENTS WITH SEMANTIC GATING
             # ============================================================
             playfulness_suppressed = False
             suppress_reason = None
-            
+
             # STEP 1: Check for serious/distress contexts (SUPPRESS)
             serious_threshold = 0.6
-            
+
             if similarities.get("distress", 0) > serious_threshold:
                 playfulness_suppressed = True
                 suppress_reason = "distress"
@@ -169,7 +173,7 @@ class EnhancedPersonality:
             elif similarities.get("emergency", 0) > serious_threshold:
                 playfulness_suppressed = True
                 suppress_reason = "emergency"
-            
+
             if playfulness_suppressed:
                 # Don't adjust playfulness, log suppression
                 debug_log(f"🚫 Playfulness suppressed (reason: {suppress_reason})")
@@ -178,7 +182,9 @@ class EnhancedPersonality:
                 if profile.is_overusing_cheeky():
                     # Reduce playfulness to dial back
                     delta_playfulness = -0.03
-                    debug_log(f"📉 Reducing playfulness (overuse: {profile.get_cheeky_count()}/5)")
+                    debug_log(
+                        f"📉 Reducing playfulness (overuse: {profile.get_cheeky_count()}/5)"
+                    )
                 else:
                     # STEP 3: Check for positive feedback on humor
                     if similarities.get("humor_appreciated", 0) > 0.75:
@@ -187,45 +193,51 @@ class EnhancedPersonality:
                     elif similarities.get("positive_feedback", 0) > 0.75:
                         delta_playfulness = 0.01
                         debug_log(f"👍 Increasing playfulness (positive feedback)")
-            
+
             # ============================================================
             # UPDATE PROFILE ASYNCHRONOUSLY
             # ============================================================
             if delta_warmth != 0 or delta_verbosity != 0 or delta_playfulness != 0:
                 self.profile_manager.update_profile_async(
-                    user_id,
-                    delta_warmth,
-                    delta_verbosity,
-                    delta_playfulness
+                    user_id, delta_warmth, delta_verbosity, delta_playfulness
                 )
-                
+
                 debug_log(f"📊 Profile update queued:")
-                debug_log(f"   Warmth: {profile.warmth:.3f} → {profile.warmth + delta_warmth:.3f}")
-                debug_log(f"   Verbosity: {profile.verbosity:.3f} → {profile.verbosity + delta_verbosity:.3f}")
-                debug_log(f"   Playfulness: {profile.playfulness:.3f} → {profile.playfulness + delta_playfulness:.3f}")
-            
+                debug_log(
+                    f"   Warmth: {profile.warmth:.3f} → {profile.warmth + delta_warmth:.3f}"
+                )
+                debug_log(
+                    f"   Verbosity: {profile.verbosity:.3f} → {profile.verbosity + delta_verbosity:.3f}"
+                )
+                debug_log(
+                    f"   Playfulness: {profile.playfulness:.3f} → {profile.playfulness + delta_playfulness:.3f}"
+                )
+
             # ============================================================
             # LOG SEMANTIC MATCHES
             # ============================================================
             if DEBUG_MODE:
-                top_matches = sorted(similarities.items(), key=lambda x: x[1], reverse=True)[:5]
+                top_matches = sorted(
+                    similarities.items(), key=lambda x: x[1], reverse=True
+                )[:5]
                 debug_log(f"🔍 Top semantic matches:")
                 for category, score in top_matches:
                     if score > 0.3:  # Only show significant matches
                         debug_log(f"   {category}: {score:.3f}")
-            
+
             return base_response
-            
+
         except Exception as e:
             debug_log(f"❌ Error in process_response: {e}")
             import traceback
+
             debug_log(traceback.format_exc())
             return base_response
-    
+
     def get_profile_stats(self, user_id: str) -> Dict:
         """Get profile statistics including playfulness"""
         profile = self.profile_manager.get_profile(user_id, apply_decay=True)
-        
+
         return {
             "warmth": profile.warmth,
             "verbosity": profile.verbosity,
@@ -238,29 +250,29 @@ class EnhancedPersonality:
             "cheeky_count": profile.get_cheeky_count(),
             "cheeky_limit": 5,
             "is_overusing": profile.is_overusing_cheeky(),
-            "last_updated": profile.last_updated
+            "last_updated": profile.last_updated,
         }
-    
+
     # ============================================================
     # LEGACY COMPATIBILITY METHODS
     # ============================================================
     def compose_response(self, user_id: str, base: str = "") -> str:
         """Legacy compatibility - alias for process_response"""
         return self.process_response(user_id, "", base)
-    
+
     def get_system_message(self, user_id: str = "default") -> str:
         """Legacy compatibility - alias for build_system_prompt"""
         return self.build_system_prompt(user_id)
-    
-    def remember(self, user, ai): 
+
+    def remember(self, user, ai):
         """Legacy compatibility - no-op"""
         pass
-    
-    def get_memory_summary(self): 
+
+    def get_memory_summary(self):
         """Legacy compatibility"""
         return ""
-    
-    def update_mood(self, mood): 
+
+    def update_mood(self, mood):
         """Legacy compatibility - no-op"""
         pass
 
@@ -271,48 +283,63 @@ class EnhancedPersonality:
 try:
     personality = EnhancedPersonality()
     PERSONALITY_V6_AVAILABLE = True
-    
+
     # Create compatibility functions
     def process(user_id: str, query: str, response: str = "") -> str:
         """Process response with personality adaptation"""
         return personality.process_response(user_id, query, response)
-    
+
     def get_system_message(user_id: str = "default") -> str:
         """Get dynamic system message for user"""
         return personality.build_system_prompt(user_id)
-    
+
     def get_phase_info(user_id: str = "default") -> Dict:
         """Get personality statistics"""
         return personality.get_profile_stats(user_id)
-    
+
     print("✅ Enhanced Personality System V6 loaded successfully")
     print("   Features: Adaptive warmth • Dynamic verbosity • Profile persistence")
-    
+
 except Exception as e:
     PERSONALITY_V6_AVAILABLE = False
     print(f"❌ Failed to initialize Enhanced Personality V6: {e}")
     print("⚠️ Using fallback personality")
-    
+
     # Fallback dummy personality
     class DummyPersonality:
-        def compose_response(self, user_id, base=""): 
+        def compose_response(self, user_id, base=""):
             return base
+
         def get_system_message(self, user_id="default"):
             return "You are a helpful companion."
-        def remember(self, user, ai): pass
-        def get_memory_summary(self): return ""
-        def update_mood(self, mood): pass
-        def get_personality_stats(self, user_id="default"): return {}
-        def process_response(self, user_id, user_input, base): return base
-    
+
+        def remember(self, user, ai):
+            pass
+
+        def get_memory_summary(self):
+            return ""
+
+        def update_mood(self, mood):
+            pass
+
+        def get_personality_stats(self, user_id="default"):
+            return {}
+
+        def process_response(self, user_id, user_input, base):
+            return base
+
     personality = DummyPersonality()
-    
-    def process(user_id, query, response=""): 
+
+    def process(user_id, query, response=""):
         return response
-    def get_system_message(user_id="default"): 
+
+    def get_system_message(user_id="default"):
         return "You are a helpful companion."
-    def get_phase_info(user_id="default"): 
+
+    def get_phase_info(user_id="default"):
         return {"warmth": 0.7, "verbosity": 0.5, "interactions": 0}
+
+
 # ============================================================
 # 1️⃣ HARD OFFLINE FLAGS (must be set FIRST)
 # ============================================================
@@ -333,17 +360,13 @@ logging.getLogger("httpcore").setLevel(logging.ERROR)
 # 4️⃣ RESOLVE MODEL PATH (HF CACHE SNAPSHOT)
 # ============================================================
 HF_CACHE_ROOT = Path(
-    "./models/models--sentence-transformers--all-MiniLM-L6-v2/snapshots"
+    "./hf_cache/models--sentence-transformers--all-MiniLM-L6-v2/snapshots"
 )
 
 if not HF_CACHE_ROOT.exists():
-    raise FileNotFoundError(
-        f"HF cache snapshots directory not found: {HF_CACHE_ROOT}"
-    )
+    raise FileNotFoundError(f"HF cache snapshots directory not found: {HF_CACHE_ROOT}")
 
-snapshots = sorted(
-    p for p in HF_CACHE_ROOT.iterdir() if p.is_dir()
-)
+snapshots = sorted(p for p in HF_CACHE_ROOT.iterdir() if p.is_dir())
 
 if not snapshots:
     raise FileNotFoundError("No model snapshots found in HF cache")
@@ -358,6 +381,7 @@ from sentence_transformers import SentenceTransformer
 model = SentenceTransformer(str(MODEL_PATH), device="cpu")
 model.max_seq_length = 256
 
+
 # ============================================================
 # 6️⃣ ENCODE FUNCTION (reusable)
 # ============================================================
@@ -370,15 +394,17 @@ def encode_texts(texts: list[str], batch_size: int = 32):
         show_progress_bar=False,
     )
 
+
 ##
 logging.basicConfig(level=logging.DEBUG)
 
 # yan.py
-#from knowledge_collector_db import KnowledgeCollector, KnowledgeSourceType
+# from knowledge_collector_db import KnowledgeCollector, KnowledgeSourceType
 from pathlib import Path
 
 from integration_adapter import RAGIntegrationAdapter, migrate_legacy_data
 from knowledge_rag_db import SourceType, ValidationStatus
+
 # yan.py - Key changes for SQLite + FAISS integration
 """
 Add these imports and modifications to your existing yan.py
@@ -410,6 +436,7 @@ from rag_enhanced import (
 
 import threading
 from typing import Optional
+
 ####
 from dotenv import load_dotenv
 import os
@@ -424,9 +451,10 @@ if api_key:
 else:
     print("❌ GEMINI_API_KEY not found")
 
-#===== Gemini Imports ========
+# ===== Gemini Imports ========
 try:
     from gemini_integration import create_gemini_llm, GeminiLLM
+
     GEMINI_AVAILABLE = True
     print("✅ Gemini integration available")
 except ImportError:
@@ -443,9 +471,7 @@ if GEMINI_AVAILABLE and api_key:
     try:
         print("🔄 Auto-initializing Gemini with API key...")
         gemini_llm = create_gemini_llm(
-            api_key=api_key, 
-            model="gemini-2.5-flash",
-            enable_web_search=True
+            api_key=api_key, model="gemini-2.5-flash", enable_web_search=True
         )
         print("✅ Gemini initialized and ready to use!")
         print("   Use 'use gemini: <your query>' to route queries to Gemini")
@@ -460,19 +486,19 @@ else:
         print("   Set GEMINI_API_KEY in your .env file to enable Gemini")
 
 
-
-
 # ================================================================
 # ============== GEMINI QUERY HELPER ==============
-def query_gemini_with_search(query: str, context: str = "", max_tokens: int = 16000) -> str:
+def query_gemini_with_search(
+    query: str, context: str = "", max_tokens: int = 16000
+) -> str:
     """
     Query Gemini with automatic web search for current information
-    
+
     Args:
         query: User's question
         context: Optional context from RAG/PDF
         max_tokens: Maximum response length (default 16000 for complete responses)
-    
+
     Returns:
         Gemini's response text
     """
@@ -494,7 +520,7 @@ def query_gemini_with_search(query: str, context: str = "", max_tokens: int = 16
 
     if not gemini_llm:
         raise Exception("Gemini not initialized. Set GEMINI_API_KEY in .env file")
-    
+
     # Build prompt with context if provided
     if context:
         full_prompt = f"""Context information:
@@ -511,7 +537,7 @@ Only answer using verified information.
 If unsure, explicitly say:
 "I do not have enough verified information."
 Do NOT speculate."""
-    
+
     try:
         # Call Gemini with increased token limit and adjusted parameters
         response = gemini_llm(
@@ -520,16 +546,18 @@ Do NOT speculate."""
             temperature=0.7,
             top_p=0.95,  # Add top_p for better completion
             stop=None,  # Don't use stop sequences
-            force_web_search=None  # Auto-detect if web search needed
+            force_web_search=None,  # Auto-detect if web search needed
         )
-        
+
         result_text = response["choices"][0]["text"]
-        
+
         # Log if response seems truncated
-        if result_text and not result_text.rstrip().endswith(('.', '!', '?', '"', "'")):
-            logging.warning(f"⚠️ Response may be truncated (doesn't end with punctuation)")
+        if result_text and not result_text.rstrip().endswith((".", "!", "?", '"', "'")):
+            logging.warning(
+                f"⚠️ Response may be truncated (doesn't end with punctuation)"
+            )
             logging.warning(f"   Last 50 chars: ...{result_text[-50:]}")
-        
+
         # Log if web search was used
         if "grounding" in response:
             queries = response["grounding"].get("search_queries", [])
@@ -544,7 +572,7 @@ Do NOT speculate."""
             if personality_result.get("suggestion"):
                 result_text = result_text + "\n\n" + personality_result["suggestion"]
 
-            #result_text = enhance_response(result_text, query)
+            # result_text = enhance_response(result_text, query)
 
         except Exception as e:
             print(f"⚠️ Response enhancement error: {e}")
@@ -552,10 +580,12 @@ Do NOT speculate."""
         # ====== END PERSONALITY ENHANCEMENT ======
 
         return result_text
-        
+
     except Exception as e:
         logging.error(f"Gemini query failed: {e}")
         raise
+
+
 # ================================================
 # ============================================================
 # QUERY DECOMPOSER - Add after imports, before pdf_tutor_enhanced
@@ -569,40 +599,42 @@ def get_context_for_llm_with_filtering(
 ):
     """
     Enhanced retrieval with strict relevance filtering
-    
+
     🔥 FIXED: Uses self.rag_db.retrieve() instead of self.search()
     """
     try:
         # 🔥 FIX: Use correct method from RAGKnowledgeDatabase
         results = self.rag_db.retrieve(query, top_k=top_k * 3, method="hybrid")
-        
+
         if not results:
             logging.debug(f"⚠️ No RAG results for query: {query}")
             return "", []
-        
+
         # 🔥 CRITICAL FIX: Filter by minimum score
         filtered_results = [r for r in results if r.score >= min_score]
-        
+
         if not filtered_results:
             logging.debug(f"⚠️ No results above threshold {min_score}")
             # Fallback: use only the top result if it's reasonably good
             if results[0].score >= 0.25:
                 filtered_results = [results[0]]
-                logging.debug(f"📌 Using top result only (score: {results[0].score:.3f})")
+                logging.debug(
+                    f"📌 Using top result only (score: {results[0].score:.3f})"
+                )
             else:
                 return "", []
-        
+
         # Sort by score and take top_k
         filtered_results = sorted(
             filtered_results, key=lambda x: x.score, reverse=True
         )[:top_k]
-        
+
         # 🔥 NEW: Check source diversity
         sources = set(r.chunk.source_name for r in filtered_results)
         logging.info(
             f"✅ Retrieved {len(filtered_results)} chunks from {len(sources)} PDF(s)"
         )
-        
+
         # Log what was retrieved
         for source in sources:
             source_results = [
@@ -612,112 +644,104 @@ def get_context_for_llm_with_filtering(
             logging.info(
                 f"  📄 {source}: {len(source_results)} chunks (avg score: {avg_score:.3f})"
             )
-        
+
         # Build context
         context_parts = []
         for r in filtered_results:
-            context_parts.append(
-                f"[Source: {r.chunk.source_name}]\n{r.chunk.content}"
-            )
-        
+            context_parts.append(f"[Source: {r.chunk.source_name}]\n{r.chunk.content}")
+
         context = "\n\n---\n\n".join(context_parts)
-        
+
         # Truncate if too long
         if len(context) > max_length:
             context = context[:max_length] + "\n\n[Content truncated...]"
-        
+
         return context, filtered_results
-        
+
     except Exception as e:
         logging.error(f"❌ RAG retrieval error: {e}")
         import traceback
+
         traceback.print_exc()
         return "", []
 
+
 class WebSearchPermissionManager:
     """Manages runtime web search permissions with user confirmation"""
-    
+
     def __init__(self):
         self._pending_request = None  # Stores query waiting for permission
         self._session_permissions = {}  # Track granted permissions per session
-    
+
     def request_permission(self, query: str, reason: str) -> dict:
         """
         Create a permission request that needs user confirmation
-        
+
         Returns:
             dict with request details to show user
         """
         self._pending_request = {
             "query": query,
             "reason": reason,
-            "timestamp": time.time()
+            "timestamp": time.time(),
         }
-        
+
         return {
             "needs_permission": True,
             "message": self._format_permission_request(reason),
-            "query": query
+            "query": query,
         }
-    
+
     def grant_permission(self) -> dict:
         """
         User granted permission - return the pending request
         """
         if not self._pending_request:
             return {"error": "No pending permission request"}
-        
+
         request = self._pending_request
         self._pending_request = None
-        
+
         # Store that permission was granted for this session
         self._session_permissions[request["query"]] = True
-        
-        return {
-            "granted": True,
-            "query": request["query"],
-            "reason": request["reason"]
-        }
-    
+
+        return {"granted": True, "query": request["query"], "reason": request["reason"]}
+
     def deny_permission(self) -> dict:
         """
         User denied permission
         """
         if not self._pending_request:
             return {"error": "No pending permission request"}
-        
+
         request = self._pending_request
         self._pending_request = None
-        
-        return {
-            "denied": True,
-            "query": request["query"]
-        }
-    
+
+        return {"denied": True, "query": request["query"]}
+
     def has_pending_request(self) -> bool:
         """Check if there's a pending permission request"""
         return self._pending_request is not None
-    
+
     def clear_pending(self):
         """Clear any pending request"""
         self._pending_request = None
-    
+
     def _format_permission_request(self, reason: str) -> str:
         """Format the permission request message"""
         return (
             f"🔍 **Permission Required**\n\n"
             f"{reason}\n\n"
-            #f"Would you like me to search the web for current information?\n\n"
+            # f"Would you like me to search the web for current information?\n\n"
             f"Requesting permission to search the web for current information?\n\n"
-            #f"**Reply with:**\n"
-            #f"• 'yes' or 'permission granted' to allow\n"
-            #f"• 'no' or 'deny' to skip web search"
+            # f"**Reply with:**\n"
+            # f"• 'yes' or 'permission granted' to allow\n"
+            # f"• 'no' or 'deny' to skip web search"
         )
 
 
 # Initialize global permission manager
 WEB_PERMISSION_MANAGER = WebSearchPermissionManager()
-
 
 
 class QueryDecomposer:
@@ -853,8 +877,13 @@ class ConfidenceCalibrator:
         # Query clarity (detect uncertainty phrases)
         # Answer honesty — model hedging is a good signal, not a bad one
         hedging_phrases = [
-            "i think", "maybe", "possibly", "might",
-            "could be", "not sure", "unclear",
+            "i think",
+            "maybe",
+            "possibly",
+            "might",
+            "could be",
+            "not sure",
+            "unclear",
         ]
         model_is_hedging = any(phrase in answer.lower() for phrase in hedging_phrases)
         # If the model admits uncertainty, that's honest — reward it slightly
@@ -891,11 +920,9 @@ class ConfidenceCalibrator:
 
         return None
 
+
 def apply_hallucination_guard(
-    answer: str,
-    source_contexts: List[str],
-    metadata: dict,
-    query_source: str = "llm"
+    answer: str, source_contexts: List[str], metadata: dict, query_source: str = "llm"
 ) -> str:
     """
     Run answer through AnswerVerifier + ConfidenceCalibrator and
@@ -918,17 +945,23 @@ def apply_hallucination_guard(
     # --- Step 1: Hard-cap hallucination — strip unsupported sentences ---
     if ANSWER_VERIFIER and source_contexts:
         try:
-            is_grounded, grounding_score, unsupported = ANSWER_VERIFIER.verify_against_sources(
-                answer, source_contexts, threshold=0.35
+            is_grounded, grounding_score, unsupported = (
+                ANSWER_VERIFIER.verify_against_sources(
+                    answer, source_contexts, threshold=0.35
+                )
             )
-            debug_log(f"🔍 Grounding check: {'✅' if is_grounded else '❌'} score={grounding_score:.2f}, unsupported={len(unsupported)}")
+            debug_log(
+                f"🔍 Grounding check: {'✅' if is_grounded else '❌'} score={grounding_score:.2f}, unsupported={len(unsupported)}"
+            )
 
             if not is_grounded and unsupported:
                 # Strip every unsupported sentence from the answer
                 unsupported_set = set(unsupported)
                 sentences = sent_tokenize(result)
                 kept = [s for s in sentences if s not in unsupported_set]
-                debug_log(f"✂️ Stripped {len(unsupported)} unsupported sentence(s) from answer")
+                debug_log(
+                    f"✂️ Stripped {len(unsupported)} unsupported sentence(s) from answer"
+                )
 
                 if kept:
                     result = " ".join(kept)
@@ -938,7 +971,9 @@ def apply_hallucination_guard(
                         "I don't have enough verified information to answer that confidently. "
                         "Could you provide more context or point me to a source?"
                     )
-                    debug_log("🚫 Hallucination cap: entire answer was unsupported — blocked")
+                    debug_log(
+                        "🚫 Hallucination cap: entire answer was unsupported — blocked"
+                    )
         except Exception as e:
             debug_log(f"⚠️ Verifier error: {e}")
 
@@ -950,7 +985,9 @@ def apply_hallucination_guard(
 
             if score < 0.35:
                 # Hard cap — confidence too low to trust any part of the answer
-                debug_log(f"🚫 Hallucination cap: confidence {score:.2f} below 0.35 — blocking answer")
+                debug_log(
+                    f"🚫 Hallucination cap: confidence {score:.2f} below 0.35 — blocking answer"
+                )
                 result = (
                     "I'm not confident enough in this answer to give it to you. "
                     "My sources don't support a reliable response here. "
@@ -965,11 +1002,14 @@ def apply_hallucination_guard(
 
     return result
 
+
 def update_web_search_settings(**kwargs):
     """Update web search configuration"""
     global WEB_SEARCH_CONFIG
     WEB_SEARCH_CONFIG.update(kwargs)
     print(f"✅ Updated web search settings: {kwargs}")
+
+
 # ============================================================
 # ANSWER VERIFIER
 # ============================================================
@@ -1017,7 +1057,9 @@ class AnswerVerifier:
 
         avg_support = sum(support_scores) / len(support_scores)
         unsupported_ratio = len(unsupported) / len(claims)
-        is_grounded = unsupported_ratio < 0.50  # allow up to 50% — LLM naturally adds connective tissue
+        is_grounded = (
+            unsupported_ratio < 0.50
+        )  # allow up to 50% — LLM naturally adds connective tissue
 
         return is_grounded, avg_support, unsupported
 
@@ -1176,37 +1218,37 @@ WEB_FIREWALL = WebSearchFirewall()
 # ============================================================
 # PROTECTED WEB SEARCH WRAPPER
 # ============================================================
-SearchResult = Tuple[str, str, str] 
+SearchResult = Tuple[str, str, str]
+
 
 def run_web_search_protected(
-    query: str,
-    force_refresh: bool = False,
-    debug: bool = False
+    query: str, force_refresh: bool = False, debug: bool = False
 ) -> Tuple[str, List[SearchResult]]:
     """
     Protected web search with firewall checking.
-    
+
     Args:
         query: Search query
         force_refresh: Skip cache
         debug: Enable debug logging
-    
+
     Returns:
         Tuple of (context_string, results_list) or (error_message, [])
     """
     # Check firewall permission
     allowed, error_msg = WEB_FIREWALL.check_permission()
-    
+
     if not allowed:
         debug_log(f"🚫 FIREWALL BLOCKED: {query}")
         return error_msg, []
-    
+
     # Proceed with search
     try:
         return run_web_search(query, force_refresh, debug)
     except Exception as e:
         debug_log(f"❌ Web search error: {e}")
         return f"Web search error: {str(e)}", []
+
 
 #########################
 def fix_concatenated_lists(text: str) -> str:
@@ -1244,24 +1286,24 @@ def fix_concatenated_lists(text: str) -> str:
         r"\1 \2" + DATE_PLACEHOLDER,
         text,
     )
-    
+
     # 🔥 NEW: Protect content within numbered list items from being split
     # Pattern: "shift of 3." should NOT trigger a new list item
     # Only split when we have: [sentence end] + [whitespace] + [number][period][space][capital letter]
-    
+
     # Method: Only create new lines when we have COMPLETE sentence endings
     # followed by a new numbered item with a capital letter
     text = re.sub(
         r"([.!?])\s+(\d+\.\s+[A-Z])",  # Full sentence end + numbered item with capital
         r"\1\n\n\2",
-        text
+        text,
     )
-    
+
     # Also handle cases where items are directly concatenated: "text.3. Next item"
     text = re.sub(
         r"([a-zA-Z\)])\.(\d+\.\s+[A-Z])",  # Letter/paren + period + numbered item
         r"\1.\n\n\2",
-        text
+        text,
     )
 
     # Split lines with multiple numbered items (only if they start with capitals)
@@ -1346,38 +1388,38 @@ def process_llm_answer(llm_out: dict, is_code: bool = False) -> str:
     try:
         # Debug what we received
         debug_log(f"🔍 Processing LLM output (type: {type(llm_out)})")
-        
+
         if llm_out is None:
             debug_log("❌ llm_out is None")
             return "Sorry, I encountered an error generating a response."
-        
+
         if not isinstance(llm_out, dict):
             debug_log(f"❌ llm_out is not a dict: {type(llm_out)}")
             return str(llm_out) if llm_out else "Error: Invalid response format"
-        
+
         # ✅ STEP 1: Extract the raw text from LLM output
-        if 'choices' not in llm_out:
+        if "choices" not in llm_out:
             debug_log(f"❌ No 'choices' in llm_out. Keys: {llm_out.keys()}")
             return "Error: Unexpected response format"
-        
-        if not llm_out['choices']:
+
+        if not llm_out["choices"]:
             debug_log("❌ choices list is empty")
             return "Sorry, the model didn't generate a response."
-        
+
         first_choice = llm_out["choices"][0]
         debug_log(f"🔍 First choice keys: {first_choice.keys()}")
-        
+
         # Try to extract text (handle both 'text' and 'message' formats)
         answer = None
         if "text" in first_choice:
             answer = first_choice["text"].strip()
         elif "message" in first_choice and isinstance(first_choice["message"], dict):
             answer = first_choice["message"].get("content", "").strip()
-        
+
         if not answer:
             debug_log(f"❌ Could not extract text from choice: {first_choice}")
             return "Sorry, I couldn't generate a proper response."
-        
+
         debug_log(f"✅ Extracted text: {len(answer)} chars")
 
         # ✅ STEP 2: Apply formatting fixes
@@ -1401,13 +1443,16 @@ def process_llm_answer(llm_out: dict, is_code: bool = False) -> str:
     except (KeyError, IndexError, TypeError, AttributeError) as e:
         debug_log(f"❌ Error processing LLM output: {e}")
         import traceback
+
         debug_log(f"Stack trace:\n{traceback.format_exc()}")
         return "Sorry, I encountered an error processing the response."
     except Exception as e:
         debug_log(f"❌ Unexpected error: {e}")
         import traceback
+
         debug_log(f"Stack trace:\n{traceback.format_exc()}")
         return "Sorry, I encountered an unexpected error."
+
 
 def clean_response_safe(text):
     """
@@ -1459,13 +1504,13 @@ def clean_response_safe(text):
             "assistant:",
             "human:",
         ]
-        
+
         if line_stripped.lower().startswith(tuple(prompt_leakage_starts)):
             break  # This is actual prompt leakage - stop here
 
         # SKIP (not break) closing remarks ONLY at very end
         is_last_or_near_end = i >= len(lines) - 3
-        
+
         if is_last_or_near_end:
             closing_phrases = [
                 "would you like",
@@ -1474,7 +1519,7 @@ def clean_response_safe(text):
                 "can i help with",
                 "let me know if",
             ]
-            
+
             if any(phrase in line_stripped.lower() for phrase in closing_phrases):
                 continue  # Skip but keep processing
 
@@ -1494,8 +1539,9 @@ def clean_response_safe(text):
 # NLTK setup
 # ----------------------------
 import nltk
-#nltk.download("stopwords", quiet=True)
-#nltk.download("vader_lexicon", quiet=True)
+
+# nltk.download("stopwords", quiet=True)
+# nltk.download("vader_lexicon", quiet=True)
 from nltk.sentiment.vader import SentimentIntensityAnalyzer
 
 # ----------------------------
@@ -1512,9 +1558,9 @@ PDF_METADATA_FILE = CACHE_DIR / "pdf_metadata.json"
 DEBUG_LOG_FILE = CACHE_DIR / "debug_log.txt"
 
 # Initialize after cache setup
-#KNOWLEDGE_COLLECTOR = KnowledgeCollector(
+# KNOWLEDGE_COLLECTOR = KnowledgeCollector(
 #    cache_dir=CACHE_DIR / "knowledge", cache_expiry_days=7, confidence_threshold=0.3
-#)
+# )
 # ============================================================
 # COMPLETE USER INFO STORAGE SYSTEM
 # ============================================================
@@ -1576,10 +1622,6 @@ rag_metadata = {
     "total_documents": 0,
     "last_updated": None,
 }
-
-
-
-
 
 
 # ----------------------------
@@ -1820,7 +1862,7 @@ class UserManager:
             success = self._save_all_users()
 
             if success:
-                #debug_log(f"✅ Updated {key_path} = {value}")
+                # debug_log(f"✅ Updated {key_path} = {value}")
                 debug_log(f"✅ Updated {key_path}")
             else:
                 debug_log(f"⚠️ Update succeeded but save failed: {key_path}")
@@ -1830,12 +1872,12 @@ class UserManager:
     def add_to_chat_history(self, user_msg: str, ai_msg: str) -> bool:
         """Update interaction stats only - chat history saved separately to chat_history.json"""
         debug_log(f"📥 add_to_chat_history called (stats only)")
-        
+
         with self._lock:
             if not self.current_user:
                 debug_log("❌ current_user is None")
                 return False
-            
+
             if self.current_user not in self.all_users:
                 debug_log(f"❌ current_user '{self.current_user}' not in all_users!")
                 return False
@@ -1843,11 +1885,10 @@ class UserManager:
             # Only update interaction count - chat history handled separately
             count = self.get_user_data("interaction_stats.total_questions", 0)
             update_result = self.update_user_stat("total_questions", count + 1)
-            
+
             debug_log(f"✅ Updated interaction stats")
             return update_result
 
-    
     def reload_from_disk(self) -> bool:
         """Force reload from disk (for sync across processes)"""
         with self._lock:
@@ -1936,6 +1977,7 @@ class UserManager:
 
         return summary
 
+
 # ============================================================
 # USER MANAGER CLASS
 # ============================================================
@@ -1948,6 +1990,8 @@ def start_user_session():
 
     user_manager.update_user_stat("session_count", count + 1)
     user_manager.update_user_stat("last_active", datetime.now().isoformat())
+
+
 # ============================================================
 # GLOBAL USER MANAGER INSTANCE
 # ============================================================
@@ -2137,8 +2181,8 @@ def build_memory_context_with_name(query: str = None):
 
         if is_maker:
             parts.append(
-            "You are speaking with your creator. "
-            "Do not reference or use their name in responses."
+                "You are speaking with your creator. "
+                "Do not reference or use their name in responses."
             )
         elif name:
             parts.append(f"The user's name is {name}. Always address them by name.")
@@ -2151,14 +2195,17 @@ def build_memory_context_with_name(query: str = None):
         # Interaction count
         count = user_manager.get_user_data("interaction_stats.total_questions", 0)
         if count > 0:
-            parts.append(f"You have spoken with this user before ({count} previous exchanges).")
+            parts.append(
+                f"You have spoken with this user before ({count} previous exchanges)."
+            )
 
         return "\n\n".join(parts) if parts else ""
 
     except Exception as e:
         debug_log(f"Error building memory context: {e}")
         return ""
-        
+
+
 def extract_and_save_username(message: str):
     """
     Enhanced name extraction that saves to UserManager.
@@ -2189,6 +2236,7 @@ def extract_and_save_username(message: str):
             return name
 
     return None
+
 
 # Debug mode toggle
 DEBUG_MODE = True
@@ -2228,6 +2276,7 @@ def load_chat_history():
     print("📝 No existing chat history found - starting fresh")
     return [], 0
 
+
 def get_last_message_from_history():
     """
     Get only the last message from chat_history.json
@@ -2243,6 +2292,7 @@ def get_last_message_from_history():
             print(f"Error loading last message: {e}")
             return None
     return None
+
 
 def save_chat_history(history, count):
     try:
@@ -2260,6 +2310,7 @@ def save_chat_history(history, count):
     except Exception as e:
         print(f"Error saving chat history: {e}")
 
+
 def save_message_to_history(query: str, response: str) -> bool:
     """
     Save a chat message to BOTH chat_history.json AND update user stats
@@ -2267,11 +2318,9 @@ def save_message_to_history(query: str, response: str) -> bool:
     global chat_history, chat_count
 
     try:
-        chat_history.append({
-            "user": query,
-            "ai": response,
-            "timestamp": datetime.now().isoformat()
-        })
+        chat_history.append(
+            {"user": query, "ai": response, "timestamp": datetime.now().isoformat()}
+        )
 
         # Keep only last 500 messages
         if len(chat_history) > 500:
@@ -2283,12 +2332,11 @@ def save_message_to_history(query: str, response: str) -> bool:
         # Update personality too
         update_personality_only(query, response)
 
-
         # Update user stats
         user_manager.add_to_chat_history(query, response)
 
         debug_log(f"💾 Saved message to chat_history.json ({len(chat_history)} total)")
-        return True   # ✅ THIS WAS MISSING
+        return True  # ✅ THIS WAS MISSING
 
     except Exception as e:
         debug_log(f"❌ Failed to save chat history: {e}")
@@ -2419,32 +2467,33 @@ startup_chunks, startup_sources, startup_emb, startup_topics = load_pdf_index()
 # PERSONALITY <-> chat_history.json SYNC SYSTEM
 # ============================================================
 
+
 def load_chat_history_into_personality(json_filepath=CHAT_HISTORY_FILE, max_load=100):
     """
     Load existing chat history from JSON into personality memory.
     Call this ONCE at program startup.
-    
+
     Args:
         json_filepath: Path to your chat_history.json file
         max_load: Optional - only load last N messages (None = load all)
-    
+
     Returns:
         int: Number of conversations loaded
     """
     if not PERSONALITY_V2_AVAILABLE:
         return 0
-    
+
     try:
         # Check if file exists
         json_path = Path(json_filepath)
         if not json_path.exists():
             print(f"📝 No existing chat history found at {json_filepath}")
             return 0
-        
+
         # Load JSON data
-        with open(json_filepath, 'r', encoding='utf-8') as f:
+        with open(json_filepath, "r", encoding="utf-8") as f:
             chat_data = json.load(f)
-        
+
         # Validate it's a list
         # Handle both old format (list) and new format (dict with 'history' key)
         if isinstance(chat_data, dict):
@@ -2456,80 +2505,85 @@ def load_chat_history_into_personality(json_filepath=CHAT_HISTORY_FILE, max_load
         else:
             print(f"⚠️ Unexpected JSON format in {json_filepath}")
             return 0
-        
+
         chat_data = history  # Use the history list for the rest of the function
-        
+
         # Apply max_load limit if specified
         if max_load and len(chat_data) > max_load:
             print(f"📊 Loading last {max_load} of {len(chat_data)} conversations")
             chat_data = chat_data[-max_load:]
-        
+
         # Load each conversation into personality
         loaded_count = 0
         skipped_count = 0
-        
+
         for entry in chat_data:
             user_msg = entry.get("user", "").strip()
             ai_msg = entry.get("ai", "").strip()
-            
+
             # Skip empty or invalid entries
             if not user_msg or not ai_msg:
                 skipped_count += 1
                 continue
-            
+
             # Add to personality memory
             # Memory is automatic in layered system
             pass
             loaded_count += 1
-        
+
         # Report results
         print(f"✅ Loaded {loaded_count} conversations into personality memory")
         if skipped_count > 0:
             print(f"   ⏭️  Skipped {skipped_count} empty/invalid entries")
-        
+
         # Show what was learned
         if loaded_count > 0:
             phase = get_phase_info()
             memory = {"summary": f"Interaction {phase['interaction_count']}"}
-            
+
             # Show detected topics
-            topics = memory.get('topics_discussed', {})
+            topics = memory.get("topics_discussed", {})
             if topics:
-                top_topics = sorted(topics.items(), key=lambda x: x[1], reverse=True)[:5]
+                top_topics = sorted(topics.items(), key=lambda x: x[1], reverse=True)[
+                    :5
+                ]
                 topic_names = [f"{t[0]} ({t[1]}x)" for t in top_topics]
                 print(f"   📚 Topics detected: {', '.join(topic_names)}")
-            
+
             # Show learning style
-            style = memory.get('learning_style', 'unknown')
-            if style and style != 'unknown':
+            style = memory.get("learning_style", "unknown")
+            if style and style != "unknown":
                 print(f"   🎯 Learning style: {style}")
-            
+
             # Show user name if detected
-            if memory.get('user_name'):
+            if memory.get("user_name"):
                 print(f"   👤 User name detected: {memory['user_name']}")
-        
+
         return loaded_count
-        
+
     except json.JSONDecodeError as e:
         print(f"❌ JSON parse error in {json_filepath}: {e}")
         return 0
     except Exception as e:
         print(f"❌ Error loading chat history: {e}")
         import traceback
+
         traceback.print_exc()
         return 0
 
 
-def sync_personality_with_json_save(user_msg, ai_msg, json_filepath="chat_history.json"):
+def sync_personality_with_json_save(
+    user_msg, ai_msg, json_filepath="chat_history.json"
+):
     """
     Save conversation to JSON AND update personality memory.
     This keeps both systems perfectly in sync.
-    
+
     Args:
         user_msg: User's message
         ai_msg: AI's response
         json_filepath: Path to chat_history.json
-    
+
     Returns:
         bool: True if successful, False otherwise
     """
@@ -2537,28 +2591,26 @@ def sync_personality_with_json_save(user_msg, ai_msg, json_filepath="chat_histor
         # 1. ALWAYS update personality memory (even if JSON fails)
         if PERSONALITY_V2_AVAILABLE:
             personality.remember(user_msg, ai_msg)
-        
+
         # 2. Load existing chat history from JSON
         json_path = Path(json_filepath)
         if json_path.exists():
-            with open(json_filepath, 'r', encoding='utf-8') as f:
+            with open(json_filepath, "r", encoding="utf-8") as f:
                 chat_data = json.load(f)
         else:
             chat_data = []
-        
+
         # 3. Append new conversation entry
-        chat_data.append({
-            "user": user_msg,
-            "ai": ai_msg,
-            "timestamp": datetime.now().isoformat()
-        })
-        
+        chat_data.append(
+            {"user": user_msg, "ai": ai_msg, "timestamp": datetime.now().isoformat()}
+        )
+
         # 4. Save back to JSON
-        with open(json_filepath, 'w', encoding='utf-8') as f:
+        with open(json_filepath, "w", encoding="utf-8") as f:
             json.dump(chat_data, f, indent=2, ensure_ascii=False)
-        
+
         return True
-        
+
     except Exception as e:
         print(f"❌ Error saving conversation: {e}")
         # Still return True if personality was updated
@@ -2569,7 +2621,7 @@ def update_personality_only(user_msg, ai_msg):
     """
     Update personality memory without touching JSON.
     Use this if you have separate JSON save logic you don't want to change.
-    
+
     Args:
         user_msg: User's message
         ai_msg: AI's response
@@ -2585,7 +2637,7 @@ def check_sync_status(json_filepath="chat_history.json"):
     """
     Check if personality memory and JSON are in sync.
     Useful for debugging.
-    
+
     Returns:
         dict: Status information
     """
@@ -2593,13 +2645,13 @@ def check_sync_status(json_filepath="chat_history.json"):
         "json_count": 0,
         "personality_count": 0,
         "in_sync": False,
-        "difference": 0
+        "difference": 0,
     }
-    
+
     try:
         # Count JSON entries
         if Path(json_filepath).exists():
-            with open(json_filepath, 'r', encoding='utf-8') as f:
+            with open(json_filepath, "r", encoding="utf-8") as f:
                 json_data = json.load(f)
                 # Handle both dict format {"history": [...]} and list format [...]
                 if isinstance(json_data, dict):
@@ -2607,22 +2659,23 @@ def check_sync_status(json_filepath="chat_history.json"):
                     result["json_count"] = len(history)
                 elif isinstance(json_data, list):
                     result["json_count"] = len(json_data)
-        
+
         # Count personality memory
         if PERSONALITY_V2_AVAILABLE:
             phase = get_phase_info()
             memory = {"summary": f"Interaction {phase['interaction_count']}"}
-            result["personality_count"] = memory.get('conversation_turns', 0)
-        
+            result["personality_count"] = memory.get("conversation_turns", 0)
+
         # Calculate difference
         result["difference"] = abs(result["json_count"] - result["personality_count"])
-        result["in_sync"] = (result["difference"] == 0)
-        
+        result["in_sync"] = result["difference"] == 0
+
     except Exception as e:
         print(f"⚠️ Error checking sync status: {e}")
         import traceback
+
         traceback.print_exc()
-    
+
     return result
 
 
@@ -2632,11 +2685,11 @@ def reset_personality_memory():
     Does NOT affect chat_history.json.
     """
     global personality
-    
+
     if not PERSONALITY_V2_AVAILABLE or not ClawdBotPersonality:
         print("⚠️ Personality system not available")
         return False
-    
+
     try:
         personality = ClawdBotPersonality()
         print("✅ Personality memory cleared (fresh state)")
@@ -2650,13 +2703,15 @@ def reload_personality_from_json(json_filepath="chat_history.json"):
     """
     Reset personality and reload from JSON.
     Useful if you edited the JSON file manually.
-    
+
     Returns:
         int: Number of conversations reloaded
     """
     if reset_personality_memory():
         return load_chat_history_into_personality(json_filepath)
     return 0
+
+
 # ----------------------------
 # Emotion Detection
 # ----------------------------
@@ -2731,7 +2786,6 @@ def detect_emotion(text):
     return "neutral"
 
 
-
 # ----------------------------
 # Memory & persistent data
 # ----------------------------
@@ -2742,9 +2796,10 @@ persistent_data = {
     "chunk_emb": startup_emb,
     "topics": startup_topics,
     "chat_history": chat_history,
-    #"user_name": None,
+    # "user_name": None,
     "interaction_count": chat_count,
 }
+
 
 # ----------------------------
 # Persona
@@ -2752,9 +2807,9 @@ persistent_data = {
 def _build_persona(user_id: str = "default") -> str:
     """Build persona string with live date/time/year so the LLM always knows 'now'."""
     now = datetime.now()
-    date_str   = now.strftime("%A, %B %d, %Y")
-    time_str   = now.strftime("%I:%M %p")
-    year_str   = now.strftime("%Y")
+    date_str = now.strftime("%A, %B %d, %Y")
+    time_str = now.strftime("%I:%M %p")
+    year_str = now.strftime("%Y")
     base_persona = (
         f"You are Project Elixer — not an assistant, but a companion. Talk like a sharp, genuine friend: direct, warm, occasionally witty, never corporate. You were made by an entity known as The Front Man, Front Man for short. Answer clearly and concisely.\n"
         f"You are honest. You have a personality — use it.\n"
@@ -2783,8 +2838,10 @@ def _build_persona(user_id: str = "default") -> str:
         sys_msg = f"{sys_msg}\n\n{base_persona}"
     return sys_msg
 
+
 # Build default persona (will be rebuilt per-user if needed)
 persona = _build_persona("default")
+
 
 # ----------------------------
 # PDF Utilities - IMPROVED CHUNKING
@@ -3328,15 +3385,15 @@ def should_skip_expansion(query: str) -> bool:
 def normalize_query(query: str) -> str:
     """
     Normalize query for consistent caching.
-    
+
     Args:
         query: Raw search query
-    
+
     Returns:
         Normalized query string
     """
     normalized = query.lower().strip()
-    
+
     # Remove common search prefixes
     prefixes = [
         "search:",
@@ -3344,18 +3401,19 @@ def normalize_query(query: str) -> str:
         "look up:",
         "web search:",
     ]
-    
+
     for prefix in prefixes:
         if normalized.startswith(prefix):
-            normalized = normalized[len(prefix):].strip()
-    
+            normalized = normalized[len(prefix) :].strip()
+
     # Remove quotes
     normalized = normalized.strip("\"'")
-    
+
     # Remove extra whitespace
     normalized = " ".join(normalized.split())
-    
+
     return normalized
+
 
 def refresh_rag_metadata():
     """
@@ -3363,28 +3421,32 @@ def refresh_rag_metadata():
     Call this after any operation that changes RAG data
     """
     global rag_metadata
-    
+
     try:
         if RAG_ADAPTER:
             # Get fresh stats from database
             cursor = RAG_ADAPTER.rag_db.conn.cursor()
-            
+
             # Count total chunks
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT COUNT(*) as count FROM knowledge_chunks
-            """)
+            """
+            )
             result = cursor.fetchone()
-            total_chunks = result['count'] if result else 0
-            
+            total_chunks = result["count"] if result else 0
+
             # Count unique sources
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT COUNT(DISTINCT source_name) as count 
                 FROM knowledge_chunks
                 WHERE source_type = 'pdf_document'
-            """)
+            """
+            )
             result = cursor.fetchone()
-            total_docs = result['count'] if result else 0
-            
+            total_docs = result["count"] if result else 0
+
             rag_metadata["total_chunks"] = total_chunks
             rag_metadata["total_documents"] = total_docs
         else:
@@ -3393,16 +3455,19 @@ def refresh_rag_metadata():
             sources = persistent_data.get("sources") or []
             rag_metadata["total_chunks"] = len(chunks)
             rag_metadata["total_documents"] = len(set(sources)) if sources else 0
-        
+
         rag_metadata["last_updated"] = datetime.now().isoformat()
-        
-        debug_log(f"📊 Metadata refreshed: {rag_metadata['total_chunks']} chunks, {rag_metadata['total_documents']} docs")
-        
+
+        debug_log(
+            f"📊 Metadata refreshed: {rag_metadata['total_chunks']} chunks, {rag_metadata['total_documents']} docs"
+        )
+
     except Exception as e:
         debug_log(f"❌ Failed to refresh metadata: {e}")
         import traceback
+
         traceback.print_exc()
-        
+
         # Ensure rag_metadata has valid default values even on error
         if "total_chunks" not in rag_metadata:
             rag_metadata["total_chunks"] = 0
@@ -3411,79 +3476,86 @@ def refresh_rag_metadata():
         if "last_updated" not in rag_metadata:
             rag_metadata["last_updated"] = None
 
+
 # ============================================================
 # PDF DELETION
 # ============================================================
 def delete_specific_pdfs(pdf_names_to_delete):
     """
     Delete specific PDFs from RAG system and legacy storage.
-    
+
     Args:
         pdf_names_to_delete: list of PDF filenames to delete
-    
+
     Returns:
         Success message string
     """
     if not pdf_names_to_delete:
         return "No PDFs selected for deletion."
-    
+
     if not isinstance(pdf_names_to_delete, list):
         pdf_names_to_delete = [pdf_names_to_delete]
-    
+
     try:
         deleted_count = 0
         errors = []
-        
+
         # ✅ FIX 1: Delete from RAG system using correct method
         if RAG_ADAPTER:
             for pdf_name in pdf_names_to_delete:
                 try:
                     # Get the database cursor
                     cursor = RAG_ADAPTER.rag_db.conn.cursor()
-                    
+
                     # Delete chunks for this PDF
-                    cursor.execute("""
+                    cursor.execute(
+                        """
                         DELETE FROM knowledge_chunks
                         WHERE source_type = 'pdf_document' 
                         AND source_name = ?
-                    """, (pdf_name,))
-                    
+                    """,
+                        (pdf_name,),
+                    )
+
                     deleted_chunks = cursor.rowcount
                     RAG_ADAPTER.rag_db.conn.commit()
-                    
+
                     if deleted_chunks > 0:
                         deleted_count += 1
-                        debug_log(f"✅ Deleted {deleted_chunks} chunks from RAG for: {pdf_name}")
-                        
+                        debug_log(
+                            f"✅ Deleted {deleted_chunks} chunks from RAG for: {pdf_name}"
+                        )
+
                         # Rebuild FAISS index after deletion
                         RAG_ADAPTER.rebuild_index()
                     else:
                         errors.append(f"Not found in RAG: {pdf_name}")
                         debug_log(f"⚠️ Not found in RAG: {pdf_name}")
-                
+
                 except Exception as e:
                     errors.append(f"Error deleting {pdf_name}: {str(e)}")
                     debug_log(f"❌ Error deleting {pdf_name}: {e}")
-        
+
         # Delete from legacy persistent data
         chunks = persistent_data.get("chunks", [])
         sources = persistent_data.get("sources", [])
         embeddings = persistent_data.get("chunk_emb")
         topics = persistent_data.get("topics", [])
-        
+
         if chunks and sources:
             # Find indices to keep
             indices_to_keep = [
-                i for i, source in enumerate(sources)
+                i
+                for i, source in enumerate(sources)
                 if source not in pdf_names_to_delete
             ]
-            
+
             # Update legacy data
             if indices_to_keep:
                 new_chunks = [chunks[i] for i in indices_to_keep]
                 new_sources = [sources[i] for i in indices_to_keep]
                 new_topics = [topics[i] for i in indices_to_keep] if topics else []
-                
+
                 if embeddings is not None:
                     if isinstance(embeddings, np.ndarray):
                         new_embeddings = embeddings[indices_to_keep]
@@ -3492,26 +3564,25 @@ def delete_specific_pdfs(pdf_names_to_delete):
                         new_embeddings = emb_array[indices_to_keep]
                 else:
                     new_embeddings = None
-                
-                persistent_data.update({
-                    "chunks": new_chunks,
-                    "sources": new_sources,
-                    "chunk_emb": new_embeddings,
-                    "topics": new_topics
-                })
-                
+
+                persistent_data.update(
+                    {
+                        "chunks": new_chunks,
+                        "sources": new_sources,
+                        "chunk_emb": new_embeddings,
+                        "topics": new_topics,
+                    }
+                )
+
                 save_pdf_index(new_chunks, new_sources, new_embeddings, new_topics)
             else:
                 # All PDFs deleted
-                persistent_data.update({
-                    "chunks": None,
-                    "sources": None,
-                    "chunk_emb": None,
-                    "topics": None
-                })
+                persistent_data.update(
+                    {"chunks": None, "sources": None, "chunk_emb": None, "topics": None}
+                )
                 if PDF_INDEX_FILE.exists():
                     PDF_INDEX_FILE.unlink()
-        
+
         # Delete physical files
         for pdf_name in pdf_names_to_delete:
             pdf_path = PDF_STORAGE_DIR / pdf_name
@@ -3521,35 +3592,36 @@ def delete_specific_pdfs(pdf_names_to_delete):
                     debug_log(f"🗑️ Deleted file: {pdf_name}")
                 except Exception as e:
                     errors.append(f"Could not delete file {pdf_name}: {str(e)}")
-        
+
         # Update metadata
         global pdf_metadata
         for pdf_name in pdf_names_to_delete:
             if pdf_name in pdf_metadata:
                 del pdf_metadata[pdf_name]
         save_pdf_metadata(pdf_metadata)
-        
+
         # ✅ FIX 2: Refresh RAG metadata after deletion
         if RAG_ADAPTER:
             refresh_rag_metadata()
-        
+
         # Build response message
         msg = f"✅ Successfully deleted {deleted_count} PDF(s)\n"
-        
+
         if errors:
             msg += f"\n⚠️ Warnings:\n"
             for error in errors[:5]:
                 msg += f"   {error}\n"
-        
+
         # Show remaining count
         remaining = get_pdf_count()
         msg += f"\n📚 Remaining PDFs: {remaining}"
-        
+
         return msg
-    
+
     except Exception as e:
         debug_log(f"❌ Delete PDFs error: {e}")
         import traceback
+
         traceback.print_exc()
         return f"Error deleting PDFs: {str(e)}"
 
@@ -3559,34 +3631,36 @@ def get_pdf_count():
     try:
         if RAG_ADAPTER:
             cursor = RAG_ADAPTER.rag_db.conn.cursor()
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT COUNT(DISTINCT source_name) as count
                 FROM knowledge_chunks
                 WHERE source_type = 'pdf_document'
-            """)
+            """
+            )
             row = cursor.fetchone()
-            return row['count'] if row else 0
-        
+            return row["count"] if row else 0
+
         # Fallback to legacy
         sources = persistent_data.get("sources", [])
         return len(set(sources)) if sources else 0
-    
+
     except Exception as e:
         debug_log(f"Error getting PDF count: {e}")
         return 0
-
 
 
 def get_pdf_list():
     """Get list of all loaded PDFs with metadata - FIXED"""
     try:
         pdfs = []
-        
+
         # Get PDFs from RAG database
         if RAG_ADAPTER:
             try:
                 cursor = RAG_ADAPTER.rag_db.conn.cursor()
-                cursor.execute("""
+                cursor.execute(
+                    """
                     SELECT DISTINCT source_name, 
                            COUNT(*) as chunk_count,
                            MAX(timestamp) as last_updated
@@ -3594,52 +3668,62 @@ def get_pdf_list():
                     WHERE source_type = 'pdf_document'
                     GROUP BY source_name
                     ORDER BY source_name
-                """)
-                
+                """
+                )
+
                 from datetime import datetime
+
                 rows = cursor.fetchall()
-                
+
                 debug_log(f"📊 Found {len(rows)} PDFs in RAG database")
-                
+
                 for row in rows:
                     pdf_info = {
                         "filename": row[0],
                         "chunk_count": row[1],
                         "last_updated": (
                             datetime.fromtimestamp(row[2]).strftime("%Y-%m-%d %H:%M")
-                            if row[2] else "Unknown"
-                        )
+                            if row[2]
+                            else "Unknown"
+                        ),
                     }
                     pdfs.append(pdf_info)
-                    debug_log(f"  • {pdf_info['filename']}: {pdf_info['chunk_count']} chunks")
-                
+                    debug_log(
+                        f"  • {pdf_info['filename']}: {pdf_info['chunk_count']} chunks"
+                    )
+
             except Exception as e:
                 debug_log(f"⚠️ Error querying RAG database: {e}")
-        
+
         # Also check legacy persistent data as fallback
         sources = persistent_data.get("sources", [])
         if sources:
             existing_names = {p["filename"] for p in pdfs}
             legacy_pdfs = set(sources)
-            
+
             for pdf_name in legacy_pdfs:
                 if pdf_name not in existing_names:
                     chunk_count = sources.count(pdf_name)
-                    pdfs.append({
-                        "filename": pdf_name,
-                        "chunk_count": chunk_count,
-                        "last_updated": "Legacy"
-                    })
+                    pdfs.append(
+                        {
+                            "filename": pdf_name,
+                            "chunk_count": chunk_count,
+                            "last_updated": "Legacy",
+                        }
+                    )
                     debug_log(f"  • {pdf_name}: {chunk_count} chunks (legacy)")
-        
+
         debug_log(f"✅ Total PDFs found: {len(pdfs)}")
         return pdfs
-        
+
     except Exception as e:
         debug_log(f"❌ Error getting PDF list: {e}")
         import traceback
+
         traceback.print_exc()
         return []
+
+
 # ============================================================
 # CACHE: Persistent storage with 7-day expiration
 # ============================================================
@@ -3650,7 +3734,6 @@ SEARCH_CACHE_DIR = Path.cwd()
 SEARCH_CACHE_FILE = SEARCH_CACHE_DIR / "search_cache.json"
 PAGE_CACHE_FILE = SEARCH_CACHE_DIR / "page_cache.json"
 CACHE_EXPIRATION_DAYS = 7
-
 
 
 def load_json(path: Path) -> dict:
@@ -3681,20 +3764,21 @@ def is_cache_valid(timestamp: float) -> bool:
     entry_time = datetime.datetime.fromtimestamp(timestamp)
     return datetime.now() - entry_time < datetime.timedelta(days=CACHE_EXPIRATION_DAYS)
 
+
 def clear_search_cache():
     """Clear all web search caches (memory + database)"""
     global _memory_cache
-    
+
     memory_count = len(_memory_cache)
     _memory_cache.clear()
-    
+
     db_count = 0
     if RAG_ADAPTER:
         try:
             db_count = RAG_ADAPTER.clean_expired(max_age_days=0)
         except Exception as e:
             debug_log(f"⚠️ Failed to clear DB cache: {e}")
-    
+
     return f"🧹 Cache cleared! ({memory_count} memory + {db_count} DB entries removed)"
 
 
@@ -3747,7 +3831,6 @@ def handle_web_search(query):
     db.cache_search(cleaned, query_hash, results, expiry_days=7)
 
     return format_search_response(cleaned, results, cached=False)
-
 
 
 def format_search_response(query, results, cached=False):
@@ -3834,27 +3917,33 @@ def fetch_duckduckgo_results(
 ) -> List[SearchResult]:
     """
     Fetch search results from DuckDuckGo Lite with retry logic.
-    
+
     Args:
         query: Search query
         max_results: Maximum results to return (uses config default)
         fetch_previews: Whether to fetch page previews (uses config default)
         timeout: Request timeout in seconds (uses config default)
         max_retries: Maximum retry attempts (uses config default)
-    
+
     Returns:
         List of (title, url, content) tuples
     """
     # Use config defaults if not specified
     max_results = max_results or WEB_SEARCH_CONFIG["max_results"]
-    fetch_previews = fetch_previews if fetch_previews is not None else WEB_SEARCH_CONFIG["fetch_previews"]
+    fetch_previews = (
+        fetch_previews
+        if fetch_previews is not None
+        else WEB_SEARCH_CONFIG["fetch_previews"]
+    )
     timeout = timeout or WEB_SEARCH_CONFIG["timeout"]
     max_retries = max_retries or WEB_SEARCH_CONFIG["max_retries"]
-    
+
     for attempt in range(max_retries):
         try:
-            debug_log(f"🔎 DuckDuckGo search (attempt {attempt + 1}/{max_retries}): '{query}'")
-            
+            debug_log(
+                f"🔎 DuckDuckGo search (attempt {attempt + 1}/{max_retries}): '{query}'"
+            )
+
             response = requests.post(
                 "https://lite.duckduckgo.com/lite/",
                 data={"q": query},
@@ -3863,66 +3952,67 @@ def fetch_duckduckgo_results(
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
                 },
             )
-            
+
             if response.status_code != 200:
                 debug_log(f"❌ Bad status: {response.status_code}")
                 if attempt < max_retries - 1:
                     time.sleep(1)  # Wait before retry
                     continue
                 return []
-            
+
             soup = BeautifulSoup(response.text, "html.parser")
             results = []
             links = soup.find_all("a", class_="result-link")
-            
+
             for link in links:
                 if len(results) >= max_results:
                     break
-                
+
                 title = link.get_text(strip=True)
                 url = link.get("href", "")
-                
+
                 if not url or not url.startswith("http"):
                     continue
-                
+
                 # Get snippet from next table cell
                 snippet = ""
                 next_elem = link.find_next("td")
                 if next_elem:
                     snippet = next_elem.get_text(strip=True)
-                
+
                 # Optionally fetch preview (slow)
                 content = snippet
                 if fetch_previews and len(snippet) < 80:
                     preview = fetch_page_preview(url, max_length=400)
                     if preview and len(preview) > len(snippet):
                         content = preview
-                
+
                 # Always use title as fallback if no content
                 if not content:
                     content = title
-                
+
                 results.append((title, url, content))
                 debug_log(f"  ✓ [{len(results)}] {title[:50]}...")
-            
+
             debug_log(f"✅ Got {len(results)} results")
             return results
-        
+
         except requests.Timeout:
             debug_log(f"⏰ Timeout on attempt {attempt + 1}")
             if attempt < max_retries - 1:
                 time.sleep(1)
                 continue
             return []
-        
+
         except Exception as e:
             debug_log(f"❌ Error on attempt {attempt + 1}: {e}")
             if attempt < max_retries - 1:
                 time.sleep(1)
                 continue
             return []
-    
+
     return []
+
 
 def fetch_full_page_content(url: str, max_length: int = 5000) -> Optional[str]:
     """
@@ -3984,15 +4074,16 @@ def fetch_full_page_content(url: str, max_length: int = 5000) -> Optional[str]:
         print(f"  ❌ Error fetching page: {e}")
         return None
 
+
 def fetch_page_preview(url: str, max_length: int = 800) -> str:
     """
     Fetch a preview/summary from a webpage (first few paragraphs).
     Lighter than full page fetch.
-    
+
     Args:
         url: URL to fetch
         max_length: Maximum preview length
-    
+
     Returns:
         Preview text or empty string on failure
     """
@@ -4004,64 +4095,63 @@ def fetch_page_preview(url: str, max_length: int = 800) -> str:
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
             },
         )
-        
+
         if response.status_code != 200:
             return ""
-        
+
         soup = BeautifulSoup(response.text, "html.parser")
-        
+
         # Remove unwanted elements
         for element in soup(["script", "style", "nav", "header", "footer"]):
             element.decompose()
-        
+
         # Try to find main content
         main_content = None
         for selector in ["main", "article", "[role='main']", ".content"]:
             main_content = soup.select_one(selector)
             if main_content:
                 break
-        
+
         if not main_content:
             main_content = soup.body
-        
+
         if not main_content:
             return ""
-        
+
         # Get first few paragraphs
         paragraphs = main_content.find_all("p", limit=3)
-        
+
         if not paragraphs:
             # Fallback: get any text
             text = main_content.get_text(separator=" ", strip=True)
         else:
             text = " ".join(p.get_text(strip=True) for p in paragraphs)
-        
+
         # Clean and truncate
         text = " ".join(text.split())
-        
+
         if len(text) > max_length:
             text = text[:max_length] + "..."
-        
+
         return text if len(text) > 50 else ""
-    
+
     except Exception:
         return ""
+
 
 def run_deep_web_search(
     query: str, max_results: int = 5, read_full_pages: bool = True
 ) -> Tuple[str, List[Tuple[str, str, str]]]:
     """
     DEEP search - fetches full page content (SLOW but thorough)
-    
+
     Use this only when explicitly requested via "deep search:" prefix
     """
     print(f"\n🔬 Deep search (full content) for: '{query}'")
 
     # Step 1: Get search results with snippets
     raw_results = fetch_duckduckgo_results(
-        query, 
-        max_results=max_results,
-        fetch_previews=False  # Get snippets first
+        query, max_results=max_results, fetch_previews=False  # Get snippets first
     )
 
     if not raw_results:
@@ -4108,6 +4198,7 @@ def run_deep_web_search(
 
     print(f"\n✅ Deep search complete: {len(enhanced_results)} results\n")
     return context, enhanced_results
+
 
 def run_smart_web_search(
     query: str, expanded_queries: Optional[List[str]] = None, force_deep: bool = False
@@ -4165,24 +4256,23 @@ def run_smart_web_search(
 # ============================================================
 
 
-
 def format_search_context(query: str, results: List[SearchResult]) -> str:
     """
     Format search results into context string for LLM.
-    
+
     Args:
         query: Original search query
         results: List of (title, url, content) tuples
-    
+
     Returns:
         Formatted context string
     """
     if not results:
         return ""
-    
+
     context = f"Web Search Results for: '{query}'\n"
     context += "=" * 70 + "\n\n"
-    
+
     for i, (title, url, content) in enumerate(results, 1):
         context += f"[{i}] {title}\n"
         context += f"    URL: {url}\n"
@@ -4190,11 +4280,12 @@ def format_search_context(query: str, results: List[SearchResult]) -> str:
             preview = content[:500] + "..." if len(content) > 500 else content
             context += f"    Content: {preview}\n"
         context += "\n"
-    
+
     context += "=" * 70 + "\n"
     context += "Based on these search results, provide a clear and accurate answer.\n"
-    
+
     return context
+
 
 def _format_context(query: str, results):
     if not results:
@@ -4220,8 +4311,6 @@ def _format_context(query: str, results):
     return "\n".join(out)
 
 
-
-
 def format_age(seconds: float) -> str:
     """Helper to format age in human-readable format"""
     if seconds < 60:
@@ -4235,18 +4324,16 @@ def format_age(seconds: float) -> str:
 
 
 def run_web_search(
-    query: str,
-    force_refresh: bool = False,
-    debug: bool = False
+    query: str, force_refresh: bool = False, debug: bool = False
 ) -> Tuple[str, List[SearchResult]]:
     """
     ⚡ FAST web search with cache-first approach.
-    
+
     Args:
         query: Search query
         force_refresh: Skip cache and force new search
         debug: Enable debug logging
-    
+
     Returns:
         Tuple of (context_string, results_list)
         where results_list contains (title, url, content) tuples
@@ -4254,10 +4341,10 @@ def run_web_search(
     if not query or len(query.strip()) < 2:
         debug_log("⚠️ Query too short")
         return "", []
-    
+
     # Normalize query for consistent caching
     normalized_query = normalize_query(query)
-    
+
     # ============================================================
     # 1️⃣ CHECK MEMORY CACHE (instant)
     # ============================================================
@@ -4265,72 +4352,69 @@ def run_web_search(
         cached = _memory_cache[normalized_query]
         debug_log(f"⚡ MEMORY HIT: {len(cached['results'])} results (instant!)")
         return cached["context"], cached["results"]
-    
+
     # ============================================================
     # 2️⃣ CHECK DATABASE CACHE
     # ============================================================
     if not force_refresh and RAG_ADAPTER:
         try:
             cached_results = RAG_ADAPTER.get_cached_web_search(
-                normalized_query,
-                max_age_days=WEB_SEARCH_CONFIG["cache_days"]
+                normalized_query, max_age_days=WEB_SEARCH_CONFIG["cache_days"]
             )
-            
+
             if cached_results and len(cached_results) >= 2:
                 context = format_search_context(normalized_query, cached_results)
-                
+
                 # Store in memory cache
                 _memory_cache[normalized_query] = {
                     "context": context,
                     "results": cached_results,
                 }
-                
+
                 debug_log(f"⚡ DB CACHE HIT: {len(cached_results)} results")
                 return context, cached_results
-        
+
         except Exception as e:
             debug_log(f"⚠️ Cache lookup failed: {e}")
-    
+
     # ============================================================
     # 3️⃣ PERFORM FRESH SEARCH
     # ============================================================
     debug_log(f"🔍 Fresh web search: '{normalized_query}'")
-    
+
     raw_results = fetch_duckduckgo_results(
         normalized_query,
         max_results=WEB_SEARCH_CONFIG["max_results"],
         fetch_previews=WEB_SEARCH_CONFIG["fetch_previews"],
     )
-    
+
     if not raw_results:
         debug_log("❌ No results found")
         return "", []
-    
+
     # ============================================================
     # 4️⃣ CACHE RESULTS
     # ============================================================
     if RAG_ADAPTER:
         try:
             added_count = RAG_ADAPTER.add_web_search_results(
-                normalized_query,
-                raw_results,
-                confidence=0.7
+                normalized_query, raw_results, confidence=0.7
             )
             debug_log(f"✅ Cached {added_count} results to DB")
         except Exception as e:
             debug_log(f"⚠️ Failed to cache: {e}")
-    
+
     # Format context
     context = format_search_context(normalized_query, raw_results)
-    
+
     # Store in memory cache
     _memory_cache[normalized_query] = {
         "context": context,
         "results": raw_results,
     }
-    
+
     debug_log(f"✅ Search complete: {len(raw_results)} results")
-    
+
     return context, raw_results
 
 
@@ -4340,18 +4424,15 @@ def get_cache_stats() -> dict:
         "memory_cache_entries": len(_memory_cache),
         "memory_cache_queries": list(_memory_cache.keys())[:5],
     }
-    
+
     if RAG_ADAPTER:
         try:
             rag_stats = RAG_ADAPTER.get_stats()
             stats.update(rag_stats)
         except Exception as e:
             debug_log(f"⚠️ Failed to get RAG stats: {e}")
-    
+
     return stats
-
-
-
 
     # Calculate cache ages
     now = time.time()
@@ -4385,9 +4466,6 @@ def clear_all_caches():
     print("🧹 All caches cleared")
 
 
-
-
-
 # ----------------------------
 # Utility: cosine similarity
 # ----------------------------
@@ -4413,46 +4491,60 @@ def cosine_sim(a, b):
         b_n = b_flat / (np.linalg.norm(b_flat, axis=1, keepdims=True) + 1e-8)
         return np.dot(a_n, b_n.T)
 
+
 from enum import Enum
 from dataclasses import dataclass
 from typing import Tuple, List, Optional
 
+
 class KnowledgeSource(Enum):
     """Explicit knowledge source types"""
+
     PDF_RAG = "pdf_rag"
     WEB_SEARCH = "web_search"
     LLM_KNOWLEDGE = "llm_knowledge"
     HYBRID = "hybrid"  # PDF + Web
     NONE = "none"
 
+
 @dataclass
 class SourceDecision:
     """Explicit decision about which source to use"""
+
     primary_source: KnowledgeSource
     fallback_source: Optional[KnowledgeSource]
     reason: str
     confidence: float
     show_user: bool  # Should we tell user which source we're using?
 
+
 class AutoModeRouter:
     """
     Explicit routing logic for auto mode.
     Makes transparent decisions about which knowledge source to use.
     """
-    
+
     def __init__(self, rag_adapter, llm, emb_model):
         self.rag_adapter = rag_adapter
         self.llm = llm
         self.emb_model = emb_model
-        
-        # Decision thresholds (tunable)
-        self.RAG_CONFIDENCE_THRESHOLD = 0.22  # Lower: catch valid DB hits with vague queries
-        self.RAG_STRONG_THRESHOLD = 0.38      # Lower: route to HYBRID more aggressively
-        self.WEB_RECENCY_KEYWORDS = [
-            'latest', 'recent', 'current', 'today', 'now',
-            '2024', '2025', 'new', 'updated'
-        ]
 
+        # Decision thresholds (tunable)
+        self.RAG_CONFIDENCE_THRESHOLD = (
+            0.22  # Lower: catch valid DB hits with vague queries
+        )
+        self.RAG_STRONG_THRESHOLD = 0.38  # Lower: route to HYBRID more aggressively
+        self.WEB_RECENCY_KEYWORDS = [
+            "latest",
+            "recent",
+            "current",
+            "today",
+            "now",
+            "2024",
+            "2025",
+            "new",
+            "updated",
+        ]
 
     def decide_source(self, query: str, allow_web: bool = True) -> SourceDecision:
         """
@@ -4460,12 +4552,12 @@ class AutoModeRouter:
         - Intent classification is the single source of truth
         - Follow-ups and meta questions CAN use PDF if relevant
         - PDF relevance is checked for follow-ups and questions
-        
-        🔥 KEY FIX: The original code was too aggressive routing FOLLOWUP 
-        and QUESTION intents directly to LLM_KNOWLEDGE, completely bypassing 
-        PDF relevance checks. This meant that even when PDFs were loaded and 
+
+        🔥 KEY FIX: The original code was too aggressive routing FOLLOWUP
+        and QUESTION intents directly to LLM_KNOWLEDGE, completely bypassing
+        PDF relevance checks. This meant that even when PDFs were loaded and
         highly relevant, the system would use only LLM knowledge.
-        
+
         SOLUTION: Check PDF relevance score BEFORE routing to LLM-only.
         """
 
@@ -4473,8 +4565,7 @@ class AutoModeRouter:
         # STEP 1: Intent classification (global authority)
         # ============================================================
         intent = INTENT_CLASSIFIER.classify(
-            query,
-            chat_history=persistent_data.get("chat_history", [])
+            query, chat_history=persistent_data.get("chat_history", [])
         )
 
         debug_log(f"🎯 Intent: {intent.intent.value}")
@@ -4494,20 +4585,23 @@ class AutoModeRouter:
                 fallback_source=None,
                 reason=intent.reasoning,
                 confidence=intent.confidence,
-                show_user=False
+                show_user=False,
             )
 
         # 🔁 Follow-ups → check last source first, then PDF relevance
         if intent.intent == QueryIntent.FOLLOWUP:
             # If last response came from web search, reuse the cached web context
-            if _last_response_source["source"] == "web" and _last_response_source["context"]:
+            if (
+                _last_response_source["source"] == "web"
+                and _last_response_source["context"]
+            ):
                 debug_log(f"🔁 FOLLOW-UP after web search → reusing cached web context")
                 return SourceDecision(
                     primary_source=KnowledgeSource.WEB_SEARCH,
                     fallback_source=KnowledgeSource.LLM_KNOWLEDGE,
                     reason="Follow-up to previous web search",
                     confidence=0.85,
-                    show_user=False
+                    show_user=False,
                 )
 
             pdf_score = self._check_pdf_relevance(query)
@@ -4520,7 +4614,7 @@ class AutoModeRouter:
                     fallback_source=None,
                     reason=f"Follow-up with PDF context ({pdf_score:.2f})",
                     confidence=pdf_score,
-                    show_user=True
+                    show_user=True,
                 )
 
             debug_log("   💬 No PDF/web relevance → conversation context only")
@@ -4529,7 +4623,7 @@ class AutoModeRouter:
                 fallback_source=None,
                 reason=intent.reasoning,
                 confidence=intent.confidence,
-                show_user=False
+                show_user=False,
             )
 
         # 💬 Conversational / explanatory → LLM only
@@ -4541,13 +4635,15 @@ class AutoModeRouter:
                 fallback_source=None,
                 reason=intent.reasoning,
                 confidence=intent.confidence,
-                show_user=False
+                show_user=False,
             )
 
         # 💬 Conversational / explanatory → check DB first, fall back to LLM
         if intent.intent in {QueryIntent.CONVERSATIONAL, QueryIntent.EXPLANATION}:
             pdf_score = self._check_pdf_relevance(query)
-            debug_log(f"💬 Conversational/Explanation intent, DB score: {pdf_score:.3f}")
+            debug_log(
+                f"💬 Conversational/Explanation intent, DB score: {pdf_score:.3f}"
+            )
             if pdf_score >= self.RAG_CONFIDENCE_THRESHOLD:
                 debug_log(f"   📄 DB relevant ({pdf_score:.2f}) → HYBRID")
                 return SourceDecision(
@@ -4555,7 +4651,7 @@ class AutoModeRouter:
                     fallback_source=KnowledgeSource.LLM_KNOWLEDGE,
                     reason=f"Conversational with DB context ({pdf_score:.2f})",
                     confidence=pdf_score,
-                    show_user=False  # Don't clutter casual answers with source notes
+                    show_user=False,  # Don't clutter casual answers with source notes
                 )
             debug_log("   💬 No DB relevance → pure LLM")
             return SourceDecision(
@@ -4563,7 +4659,7 @@ class AutoModeRouter:
                 fallback_source=None,
                 reason=intent.reasoning,
                 confidence=intent.confidence,
-                show_user=False
+                show_user=False,
             )
 
         # 🧠 Context-dependent (high confidence only)
@@ -4571,7 +4667,7 @@ class AutoModeRouter:
             # 🔥 FIX: Even context-dependent questions might need PDF
             pdf_score = self._check_pdf_relevance(query)
             debug_log(f"🧠 Context-dependent query, PDF score: {pdf_score:.3f}")
-            
+
             if pdf_score >= self.RAG_CONFIDENCE_THRESHOLD:
                 debug_log(f"   📄 PDF relevant ({pdf_score:.2f}) → HYBRID mode")
                 return SourceDecision(
@@ -4579,16 +4675,16 @@ class AutoModeRouter:
                     fallback_source=None,
                     reason=f"Context-dependent with PDF ({pdf_score:.2f})",
                     confidence=pdf_score,
-                    show_user=True
+                    show_user=True,
                 )
-            
+
             debug_log("   💬 No PDF relevance → LLM only")
             return SourceDecision(
                 primary_source=KnowledgeSource.LLM_KNOWLEDGE,
                 fallback_source=None,
                 reason="High-confidence context-dependent question",
                 confidence=intent.confidence,
-                show_user=False
+                show_user=False,
             )
 
         # ============================================================
@@ -4603,7 +4699,7 @@ class AutoModeRouter:
                 fallback_source=None,
                 reason="Code generation / explanation",
                 confidence=0.95,
-                show_user=False
+                show_user=False,
             )
 
         # 📄 Explicit PDF request → force PDF
@@ -4614,7 +4710,7 @@ class AutoModeRouter:
                 fallback_source=KnowledgeSource.LLM_KNOWLEDGE,
                 reason="Explicit PDF reference",
                 confidence=0.95,
-                show_user=True
+                show_user=True,
             )
 
         # ============================================================
@@ -4631,7 +4727,7 @@ class AutoModeRouter:
                 fallback_source=None,
                 reason=f"Strong PDF relevance ({pdf_score:.2f})",
                 confidence=pdf_score,
-                show_user=True
+                show_user=True,
             )
 
         # Moderate PDF relevance → Hybrid
@@ -4642,17 +4738,32 @@ class AutoModeRouter:
                 fallback_source=None,
                 reason=f"Moderate PDF relevance ({pdf_score:.2f})",
                 confidence=pdf_score,
-                show_user=True
+                show_user=True,
             )
 
         # ============================================================
         # STEP 5: News/current events → RAG before LLM fallback
         # ============================================================
         news_keywords = [
-            "latest", "recent", "current", "new release", "just released",
-            "announced", "this week", "today", "trending", "news",
-            "what's new", "newly", "coming out", "just launched",
-            "update", "upgraded", "version", "patch", "launched",
+            "latest",
+            "recent",
+            "current",
+            "new release",
+            "just released",
+            "announced",
+            "this week",
+            "today",
+            "trending",
+            "news",
+            "what's new",
+            "newly",
+            "coming out",
+            "just launched",
+            "update",
+            "upgraded",
+            "version",
+            "patch",
+            "launched",
         ]
         query_lower = query.lower()
         is_news_like = any(kw in query_lower for kw in news_keywords)
@@ -4660,7 +4771,9 @@ class AutoModeRouter:
         if is_news_like and self.rag_adapter:
             debug_log("📰 News-like query → checking RAG news store")
             try:
-                results = self.rag_adapter.rag_db.retrieve(query, top_k=3, method="hybrid")
+                results = self.rag_adapter.rag_db.retrieve(
+                    query, top_k=3, method="hybrid"
+                )
                 if results and any(r.score >= 0.45 for r in results):
                     best = max(r.score for r in results)
                     debug_log(f"📰 News RAG hit (score {best:.2f}) → HYBRID")
@@ -4669,7 +4782,7 @@ class AutoModeRouter:
                         fallback_source=KnowledgeSource.LLM_KNOWLEDGE,
                         reason=f"News/current events in RAG ({best:.2f})",
                         confidence=best,
-                        show_user=True
+                        show_user=True,
                     )
             except Exception as e:
                 debug_log(f"📰 News RAG check failed: {e}")
@@ -4683,10 +4796,9 @@ class AutoModeRouter:
             fallback_source=None,
             reason="No relevant content found in DB",
             confidence=0.60,
-            show_user=False
+            show_user=False,
         )
 
-        
     def _check_pdf_relevance(self, query: str) -> float:
         """
         Check relevance across ALL stored content (PDFs, web cache, chat history).
@@ -4701,15 +4813,15 @@ class AutoModeRouter:
             cursor.execute("SELECT COUNT(*) as count FROM knowledge_chunks")
             row = cursor.fetchone()
 
-            if not row or row['count'] == 0:
+            if not row or row["count"] == 0:
                 debug_log("📭 DB is empty — skipping relevance check")
                 return 0.0
 
             # Search across all sources
             results = self.rag_adapter.rag_db.retrieve(
                 query,
-                top_k=10,       # wider net to avoid missing valid content
-                method="hybrid"
+                top_k=10,  # wider net to avoid missing valid content
+                method="hybrid",
             )
 
             if not results:
@@ -4719,57 +4831,78 @@ class AutoModeRouter:
             avg_top3 = sum(r.score for r in results[:3]) / min(3, len(results))
             # Use average of top 3 to reduce single-outlier noise
             combined_score = (max_score * 0.6) + (avg_top3 * 0.4)
-            debug_log(f"🗄️ DB relevance: max={max_score:.3f} avg_top3={avg_top3:.3f} combined={combined_score:.3f} (checked {row['count']} chunks)")
+            debug_log(
+                f"🗄️ DB relevance: max={max_score:.3f} avg_top3={avg_top3:.3f} combined={combined_score:.3f} (checked {row['count']} chunks)"
+            )
             return float(combined_score)
 
         except Exception as e:
             debug_log(f"❌ DB relevance check failed: {e}")
             return 0.0
-    
+
     def _is_general_knowledge_query(self, query: str) -> bool:
         """
         Detect if query is asking for general knowledge vs. specific info.
         """
         query_lower = query.lower()
-        
+
         # General knowledge indicators
         general_patterns = [
-            'what is', 'what are', 'define', 'explain',
-            'how does', 'why does', 'who was', 'when did',
-            'difference between', 'history of'
+            "what is",
+            "what are",
+            "define",
+            "explain",
+            "how does",
+            "why does",
+            "who was",
+            "when did",
+            "difference between",
+            "history of",
         ]
-        
+
         # Specific info indicators (override general)
         specific_patterns = [
-            'according to', 'in the', 'from', 'mentioned',
-            'the document', 'the paper', 'the pdf'
+            "according to",
+            "in the",
+            "from",
+            "mentioned",
+            "the document",
+            "the paper",
+            "the pdf",
         ]
-        
+
         # Check for specific indicators first
         if any(pattern in query_lower for pattern in specific_patterns):
             return False
-        
+
         # Check for general patterns
         if any(query_lower.startswith(pattern) for pattern in general_patterns):
             # Additional check: is it about a named entity?
             words = query.split()
-            has_proper_noun = any(word[0].isupper() and word not in ['What', 'Who', 'When', 'Where', 'Why', 'How'] for word in words)
-            
+            has_proper_noun = any(
+                word[0].isupper()
+                and word not in ["What", "Who", "When", "Where", "Why", "How"]
+                for word in words
+            )
+
             if has_proper_noun:
                 return False  # Specific entity question
-            
+
             return True
-        
+
         return False
+
 
 # ============================================================
 # CONFIGURATION & SETUP
 # ============================================================
 
+
 class QueryIntent(Enum):
     QUESTION = "question"
     FOLLOWUP = "followup"
     META_QUESTION = "meta_question"
+
 
 @dataclass
 class IntentResult:
@@ -4778,6 +4911,7 @@ class IntentResult:
     reasoning: str
     needs_context: bool
 
+
 # ============================================================
 # EMBEDDING UTILITIES
 # ============================================================
@@ -4785,33 +4919,33 @@ class IntentResult:
 # Option 1: Using sentence-transformers (recommended for quality)
 try:
     from sentence_transformers import SentenceTransformer
-    
+
     # Lazy load model to avoid startup overhead
     _embedding_model = None
-    
+
     def _get_embedding_model():
         global _embedding_model
         if _embedding_model is None:
             # Use a lightweight, fast model
             # Options: 'all-MiniLM-L6-v2' (22MB, fast) or 'paraphrase-MiniLM-L3-v2' (16MB, faster)
-            _embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+            _embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
         return _embedding_model
-    
+
     def embed(text: str) -> np.ndarray:
         """Generate embedding for text using sentence-transformers."""
         model = _get_embedding_model()
         return model.encode(text, convert_to_numpy=True)
-    
+
     EMBEDDINGS_AVAILABLE = True
 
 except ImportError:
     EMBEDDINGS_AVAILABLE = False
-    
+
     # Option 2: Fallback to simpler TF-IDF based similarity
     from sklearn.feature_extraction.text import TfidfVectorizer
-    
+
     _tfidf_vectorizer = None
-    
+
     def embed(text: str) -> np.ndarray:
         """Fallback: Use TF-IDF for basic semantic similarity."""
         # This is a simple fallback - won't work well for single queries
@@ -4820,17 +4954,19 @@ except ImportError:
             "Embeddings require sentence-transformers. Install with: pip install sentence-transformers"
         )
 
+
 def cosine_sim(emb1: np.ndarray, emb2: np.ndarray) -> float:
     """Calculate cosine similarity between two embeddings."""
     # Normalize vectors
     norm1 = np.linalg.norm(emb1)
     norm2 = np.linalg.norm(emb2)
-    
+
     if norm1 == 0 or norm2 == 0:
         return 0.0
-    
+
     # Compute cosine similarity
     return float(np.dot(emb1, emb2) / (norm1 * norm2))
+
 
 # ============================================================
 # DEBUG LOGGING
@@ -4838,10 +4974,13 @@ def cosine_sim(emb1: np.ndarray, emb2: np.ndarray) -> float:
 
 DEBUG_MODE = True  # Set to False in production
 
+
 def debug_log(message: str):
     """Simple debug logger."""
     if DEBUG_MODE:
         print(f"[DEBUG] {message}")
+
+
 # ============================================================
 # ENHANCED QUERY CLASSIFIER
 # ============================================================
@@ -4850,10 +4989,11 @@ from dataclasses import dataclass
 from typing import List, Optional
 import re
 
+
 class QueryIntent(Enum):
     GREETING = "greeting"
     CONVERSATIONAL = "conversational"
-    FOLLOWUP = "followup"   
+    FOLLOWUP = "followup"
     CODE = "code"
     EXPLANATION = "explanation"
     META_QUESTION = "meta_question"
@@ -4862,6 +5002,7 @@ class QueryIntent(Enum):
 
 
 from dataclasses import dataclass
+
 
 @dataclass
 class IntentResult:
@@ -4872,28 +5013,29 @@ class IntentResult:
     needs_context: bool = False
 
 
-
 @dataclass
 class IntentClassification:
     """Complete intent classification result"""
+
     intent: QueryIntent
     confidence: float
     reasoning: str
     needs_pdf: bool
     needs_context: bool
 
+
 class ImprovedIntentClassifier:
     """
     Enhanced intent classifier with extensive follow-up detection
     """
-    
+
     def __init__(self, use_embeddings: bool = True):
         self.use_embeddings = use_embeddings and EMBEDDINGS_AVAILABLE
-        
+
         if use_embeddings and not EMBEDDINGS_AVAILABLE:
             debug_log("⚠️ sentence-transformers not available. Embeddings disabled.")
             debug_log("   Install with: pip install sentence-transformers")
-    
+
         # Greeting patterns (STRICT - only pure greetings)
         self.GREETING_PATTERNS = [
             r"^hi[\s\?\!]*$",
@@ -4903,10 +5045,10 @@ class ImprovedIntentClassifier:
             r"^how are you[\s\?\!]*$",
             r"^what'?s up[\s\?\!]*$",
         ]
-        
+
         # Greeting words that need special handling
         self.GREETING_WORDS = {"hi", "hello", "hey"}
-        
+
         # Conversational (identity, thanks, etc.)
         self.CONVERSATIONAL_PATTERNS = [
             r"^who are you",
@@ -4922,72 +5064,153 @@ class ImprovedIntentClassifier:
             r"^ok got it[\s\!\?]*$",
             r"^tell me a joke",
         ]
-        
+
         # Code verbs
         self.CODE_VERBS = {
-            "write", "create", "build", "make", "generate", 
-            "implement", "develop", "code", "debug", "fix"
+            "write",
+            "create",
+            "build",
+            "make",
+            "generate",
+            "implement",
+            "develop",
+            "code",
+            "debug",
+            "fix",
         }
-        
+
         # Code objects
         self.CODE_OBJECTS = {
-            "function", "class", "program", "script", "code", "app",
-            "method", "algorithm", "module", "component", "api",
-            "loop", "array", "list", "dict", "variable", "object",
-            "sort", "sorting", "search"
+            "function",
+            "class",
+            "program",
+            "script",
+            "code",
+            "app",
+            "method",
+            "algorithm",
+            "module",
+            "component",
+            "api",
+            "loop",
+            "array",
+            "list",
+            "dict",
+            "variable",
+            "object",
+            "sort",
+            "sorting",
+            "search",
         }
-        
+
         # Explanation triggers
         self.EXPLANATION_STARTERS = [
-            "what is", "what are", "what's", "define", "explain",
-            "describe", "tell me about", "how does", "why does",
-            "how do", "why do", "why is", "why are"
+            "what is",
+            "what are",
+            "what's",
+            "define",
+            "explain",
+            "describe",
+            "tell me about",
+            "how does",
+            "why does",
+            "how do",
+            "why do",
+            "why is",
+            "why are",
         ]
-        
+
         # PDF-specific indicators
         self.PDF_INDICATORS = [
-            "in the pdf", "in the document", "according to the document",
-            "from the pdf", "the document says", ".pdf"
+            "in the pdf",
+            "in the document",
+            "according to the document",
+            "from the pdf",
+            "the document says",
+            ".pdf",
         ]
-        
+
         # 🔥 ENHANCED: Comprehensive anaphora detection
         self.ANAPHORA = {
             # Pronouns
-            "it", "that", "this", "them", "these", "those",
+            "it",
+            "that",
+            "this",
+            "them",
+            "these",
+            "those",
             # Determiners that often reference previous content
-            "the", "said", "mentioned", "above", "previous",
+            "the",
+            "said",
+            "mentioned",
+            "above",
+            "previous",
             # Possessives referring back
-            "its", "their", "his", "her"
+            "its",
+            "their",
+            "his",
+            "her",
         }
-        
+
         # 🔥 ENHANCED: Extended follow-up connectors (ALL TYPES)
         self.FOLLOWUP_CONNECTORS = [
             # Continuation phrases
-            "what about", "how about", "tell me more", "go deeper",
-            "continue", "also", "additionally", "and what",
-            "now tell", "now explain", "but why", "but how",
-            
+            "what about",
+            "how about",
+            "tell me more",
+            "go deeper",
+            "continue",
+            "also",
+            "additionally",
+            "and what",
+            "now tell",
+            "now explain",
+            "but why",
+            "but how",
             # Clarification requests (CRITICAL FOR YOUR CASE)
-            "what does", "what do", "what did", "what will",
-            "how does", "how do", "how did", "how will",
-            "why does", "why do", "why did", "why is", "why are",
-            "when does", "when do", "when did",
-            "where does", "where do", "where is",
-            
+            "what does",
+            "what do",
+            "what did",
+            "what will",
+            "how does",
+            "how do",
+            "how did",
+            "how will",
+            "why does",
+            "why do",
+            "why did",
+            "why is",
+            "why are",
+            "when does",
+            "when do",
+            "when did",
+            "where does",
+            "where do",
+            "where is",
             # Elaboration requests
-            "can you explain", "can you clarify", "can you elaborate",
-            "what do you mean", "what does that mean",
-            "could you explain", "please explain",
-            
+            "can you explain",
+            "can you clarify",
+            "can you elaborate",
+            "what do you mean",
+            "what does that mean",
+            "could you explain",
+            "please explain",
             # Follow-up actions
-            "show me", "give me", "provide",
-            "can i", "could i", "how can i",
-            
+            "show me",
+            "give me",
+            "provide",
+            "can i",
+            "could i",
+            "how can i",
             # Reference to previous content
-            "in that", "from that", "based on that",
-            "according to", "as you said", "as mentioned"
+            "in that",
+            "from that",
+            "based on that",
+            "according to",
+            "as you said",
+            "as mentioned",
         ]
-        
+
         # 🔥 NEW: Questions about previous output
         self.PREVIOUS_REFERENCE_PATTERNS = [
             r"\b(the|that|this)\s+(code|example|answer|explanation|output|result|response)\b",
@@ -4996,19 +5219,19 @@ class ImprovedIntentClassifier:
             r"\bhow\s+(does|did|will)\s+(it|that|this|the)\b",
             r"\bwhy\s+(does|did|is|are)\s+(it|that|this|the)\b",
         ]
-    
+
     def classify(self, query: str, chat_history: List[dict]) -> IntentResult:
         """
         Classify user query intent.
-        
+
         Args:
             query: The user's query text
             chat_history: List of dicts with 'user' and 'ai' keys
-            
+
         Returns:
             IntentResult with classification details
         """
-        
+
         debug_log(f"classify(): chat_history len = {len(chat_history)}")
 
         # ============================================================
@@ -5025,13 +5248,22 @@ class ImprovedIntentClassifier:
         # PRIORITY 1: META QUESTIONS (ABSOLUTE OVERRIDE)
         # ============================================================
         meta_patterns = [
-            "what did i ask", "what did i say", "what was my last",
-            "what are we talking about", "what were we talking about",
-            "what did we discuss", "what have we discussed",
-            "conversation history", "chat history",
-            "what did you say", "what did you tell me",
-            "your last response", "your previous answer",
-            "earlier you said", "you mentioned", "you told me"
+            "what did i ask",
+            "what did i say",
+            "what was my last",
+            "what are we talking about",
+            "what were we talking about",
+            "what did we discuss",
+            "what have we discussed",
+            "conversation history",
+            "chat history",
+            "what did you say",
+            "what did you tell me",
+            "your last response",
+            "your previous answer",
+            "earlier you said",
+            "you mentioned",
+            "you told me",
         ]
 
         if any(p in query_norm for p in meta_patterns):
@@ -5039,7 +5271,7 @@ class ImprovedIntentClassifier:
                 intent=QueryIntent.META_QUESTION,
                 confidence=0.95,
                 reasoning="Meta question about conversation history",
-                needs_context=True
+                needs_context=True,
             )
 
         # ============================================================
@@ -5050,7 +5282,7 @@ class ImprovedIntentClassifier:
                 intent=QueryIntent.QUESTION,
                 confidence=0.80,
                 reasoning="No prior conversation",
-                needs_context=False
+                needs_context=False,
             )
 
         last_ai = chat_history[-1].get("ai", "")
@@ -5073,13 +5305,24 @@ class ImprovedIntentClassifier:
         # 1️⃣ CONFUSION / MISUNDERSTANDING (VERY HIGH)
         # ------------------------------------------------------------
         confusion_patterns = [
-            "i dont get", "dont get it", "i dont understand",
-            "dont understand", "i dont catch", "didnt catch",
-            "makes no sense", "doesnt make sense",
-            "im confused", "i am confused", "confused",
-            "what do you mean", "what does that mean",
-            "went over my head", "lost me", "im lost",
-            "huh", "wait what"
+            "i dont get",
+            "dont get it",
+            "i dont understand",
+            "dont understand",
+            "i dont catch",
+            "didnt catch",
+            "makes no sense",
+            "doesnt make sense",
+            "im confused",
+            "i am confused",
+            "confused",
+            "what do you mean",
+            "what does that mean",
+            "went over my head",
+            "lost me",
+            "im lost",
+            "huh",
+            "wait what",
         ]
 
         if any(p in query_norm for p in confusion_patterns):
@@ -5089,10 +5332,20 @@ class ImprovedIntentClassifier:
         # 2️⃣ EXPLICIT FOLLOW-UP REQUESTS
         # ------------------------------------------------------------
         explicit_followups = [
-            "tell me more", "explain", "explain that", "explain this",
-            "can you explain", "clarify", "break it down",
-            "elaborate", "go on", "continue", "walk me through",
-            "show me", "give me more", "expand on"
+            "tell me more",
+            "explain",
+            "explain that",
+            "explain this",
+            "can you explain",
+            "clarify",
+            "break it down",
+            "elaborate",
+            "go on",
+            "continue",
+            "walk me through",
+            "show me",
+            "give me more",
+            "expand on",
         ]
 
         if any(p in query_norm for p in explicit_followups):
@@ -5102,10 +5355,17 @@ class ImprovedIntentClassifier:
         # 3️⃣ DIRECT REFERENCE TO PREVIOUS RESPONSE
         # ------------------------------------------------------------
         references = [
-            "your answer", "your response", "your explanation",
-            "the example", "the joke", "the code",
-            "what you said", "what you wrote",
-            "that answer", "that explanation", "the previous"
+            "your answer",
+            "your response",
+            "your explanation",
+            "the example",
+            "the joke",
+            "the code",
+            "what you said",
+            "what you wrote",
+            "that answer",
+            "that explanation",
+            "the previous",
         ]
 
         if any(r in query_norm for r in references):
@@ -5129,15 +5389,21 @@ class ImprovedIntentClassifier:
         # ------------------------------------------------------------
         # 6️⃣ CONTINUATION / BRIDGE WORDS
         # ------------------------------------------------------------
-        if query_norm.startswith(("and", "but", "so", "also", "what about", "how about")):
+        if query_norm.startswith(
+            ("and", "but", "so", "also", "what about", "how about")
+        ):
             mark(0.90, "Continuation of previous thought")
 
         # ------------------------------------------------------------
         # 7️⃣ CONTEXTUAL QUESTION FORMS
         # ------------------------------------------------------------
         context_questions = [
-            "why is it", "how does it work", "what does it do",
-            "what is it", "what does it mean", "where is it"
+            "why is it",
+            "how does it work",
+            "what does it do",
+            "what is it",
+            "what does it mean",
+            "where is it",
         ]
 
         if any(q in query_norm for q in context_questions):
@@ -5147,9 +5413,14 @@ class ImprovedIntentClassifier:
         # 8️⃣ TOPIC CHANGE ANTI-SIGNALS
         # ------------------------------------------------------------
         topic_change_indicators = [
-            "new question", "different topic", "changing topic",
-            "unrelated", "on another note", "switching gears",
-            "moving on", "different subject"
+            "new question",
+            "different topic",
+            "changing topic",
+            "unrelated",
+            "on another note",
+            "switching gears",
+            "moving on",
+            "different subject",
         ]
 
         has_topic_change = any(p in query_norm for p in topic_change_indicators)
@@ -5163,8 +5434,8 @@ class ImprovedIntentClassifier:
         # ============================================================
         should_use_embeddings = (
             self.use_embeddings
-            and last_ai 
-            and len(last_ai) > 40 
+            and last_ai
+            and len(last_ai) > 40
             and not has_topic_change
             and confidence < 0.95
         )
@@ -5173,7 +5444,7 @@ class ImprovedIntentClassifier:
             try:
                 # Extract meaningful content from last AI response
                 ai_text = last_ai[-1000:] if len(last_ai) > 1000 else last_ai
-                
+
                 q_emb = embed(query_norm)
                 ai_emb = embed(ai_text)
                 sim = cosine_sim(q_emb, ai_emb)
@@ -5193,10 +5464,14 @@ class ImprovedIntentClassifier:
                     else:
                         reasons.append(f"Weak topic similarity ({sim:.2f})")
                 else:
-                    debug_log(f"   ⚠️ Low topic similarity ({sim:.2f}) - possible topic change")
+                    debug_log(
+                        f"   ⚠️ Low topic similarity ({sim:.2f}) - possible topic change"
+                    )
                     if is_followup and confidence < 0.85:
                         confidence *= 0.85
-                        reasons.append(f"Low topic similarity dampens confidence ({sim:.2f})")
+                        reasons.append(
+                            f"Low topic similarity dampens confidence ({sim:.2f})"
+                        )
 
             except Exception as e:
                 debug_log(f"⚠️ Embedding similarity failed: {e}")
@@ -5204,103 +5479,101 @@ class ImprovedIntentClassifier:
         # ============================================================
         # 🔍 ADDITIONAL HEURISTICS
         # ============================================================
-        
+
         if word_count <= 3 and "?" in query:
             mark(0.88, "Short question likely seeks clarification")
-        
-        if any(w in query_norm for w in ["instead", "rather", "alternatively", "or", "versus", "vs"]):
+
+        if any(
+            w in query_norm
+            for w in ["instead", "rather", "alternatively", "or", "versus", "vs"]
+        ):
             mark(0.87, "Comparative language suggests continuation")
 
         # ============================================================
         # FINAL DECISION
         # ============================================================
         FOLLOWUP_THRESHOLD = 0.70
-        
+
         if is_followup and confidence >= FOLLOWUP_THRESHOLD:
             return IntentResult(
                 intent=QueryIntent.FOLLOWUP,
                 confidence=min(confidence, 0.99),
                 reasoning=" | ".join(reasons),
-                needs_context=True
+                needs_context=True,
             )
 
         return IntentResult(
             intent=QueryIntent.QUESTION,
             confidence=0.70,
             reasoning="No strong follow-up indicators detected",
-            needs_context=False
+            needs_context=False,
         )
 
-
-    
     def _detect_followup_comprehensive(
-        self, 
+        self,
         original_query: str,
-        query_lower: str, 
-        words: List[str], 
-        chat_history: List
+        query_lower: str,
+        words: List[str],
+        chat_history: List,
     ) -> tuple[bool, str]:
         """
         🔥 COMPREHENSIVE FOLLOW-UP DETECTION - Enhanced for code questions
         """
-        
+
         # Guard: Must have recent history
         if not chat_history or len(chat_history) < 1:
             return False, ""
-        
+
         last_entry = chat_history[-1]
-        last_user = last_entry.get('user', '').lower()
-        last_ai = last_entry.get('ai', '')
-        
+        last_user = last_entry.get("user", "").lower()
+        last_ai = last_entry.get("ai", "")
+
         if not last_user or not last_ai:
             return False, ""
-        
+
         # ============================================================
         # PRIORITY 1: CODE EXPLANATION DETECTION (CRITICAL FIX)
         # ============================================================
-        prev_had_code = '```' in last_ai
-        
+        prev_had_code = "```" in last_ai
+
         if prev_had_code:
             # 🔥 NEW: Direct "what does the code do" match
             if re.match(r"^what\s+(does|do)\s+(?:the\s+)?code\s+do", query_lower):
                 return True, "🎯 Direct 'what does the code do' request"
-            
+
             # 🔥 ENHANCED: More code explanation patterns
             code_patterns = [
                 # "what does X code do/mean/work"
                 r"^what\s+(does|do|did|will)\s+(the|this|that|it|your|above)?\s*code",
                 r"^what\s+(is|are)\s+(the|this|that)?\s*code",
                 r"^what's\s+(the|this|that)?\s*code",
-                
                 # 🔥 NEW: "what does it/that/this do" when previous was code
                 r"^what\s+(does|do)\s+(it|that|this)\s+do",
                 r"^what\s+(does|do)\s+(it|that|this)$",  # Just "what does it"
-                
                 # "how does X work"
                 r"^how\s+(does|do|did|will)\s+(the|this|that|it|your|above)?\s*code",
                 r"^how\s+(does|do)\s+(it|that|this)",
-                
                 # "why does X..."
                 r"^why\s+(does|do|did|is|are)\s+(the|this|that|it|your)?\s*code",
-                
                 # "explain X"
                 r"^(explain|describe|show|walk\s+through|break\s+down)\s+(the|this|that|your)?\s*code",
                 r"^(explain|describe)\s+(it|that|this)",
-                
                 # 🔥 NEW: "what does it do" - very common follow-up
                 r"^what\s+does\s+it\s+do",
                 r"^what\s+is\s+it\s+doing",
-                
                 # Edge cases
                 r"^code\s+(explanation|meaning|purpose)",
                 r"^(can|could)\s+you\s+(explain|describe)\s+(the|this|that)?\s*code",
             ]
-            
+
             for pattern in code_patterns:
                 if re.search(pattern, query_lower):
                     match = re.search(pattern, query_lower)
-                    return True, f"🎯 Code explanation: '{match.group()}' (prev had code)"
-            
+                    return (
+                        True,
+                        f"🎯 Code explanation: '{match.group()}' (prev had code)",
+                    )
+
             # 🔥 NEW: Generic pronoun questions after code
             pronoun_code_patterns = [
                 r"^what\s+(does|do)\s+it",
@@ -5311,27 +5584,30 @@ class ImprovedIntentClassifier:
                 r"^what's\s+it",
                 r"^describe\s+it",
             ]
-            
+
             for pattern in pronoun_code_patterns:
                 if re.match(pattern, query_lower):
-                    return True, f"💡 Pronoun reference after code: '{words[0]} {words[1]}'"
-        
+                    return (
+                        True,
+                        f"💡 Pronoun reference after code: '{words[0]} {words[1]}'",
+                    )
+
         # ============================================================
         # PRIORITY 2: EXPLICIT CONTENT REFERENCES
         # ============================================================
-        
+
         # 2A: "the X" where X is a specific artifact
         artifact_patterns = [
             r"\b(the|that|this)\s+(code|example|program|function|script|method|class)\b",
             r"\b(the|that|this)\s+(output|result|answer|response|solution|explanation)\b",
             r"\b(your|you)\s+(code|example|answer|explanation)\b",
         ]
-        
+
         for pattern in artifact_patterns:
             match = re.search(pattern, query_lower)
             if match:
                 return True, f"📦 Direct artifact reference: '{match.group()}'"
-        
+
         # 2B: Reference to previous answer
         previous_ref_patterns = [
             r"\bprevious\s+(answer|response|explanation|example)\b",
@@ -5339,30 +5615,37 @@ class ImprovedIntentClassifier:
             r"\bearlier\s+(you\s+said|mentioned|explained)\b",
             r"\bas\s+you\s+(said|mentioned|explained|showed)\b",
         ]
-        
+
         for pattern in previous_ref_patterns:
             if re.search(pattern, query_lower):
                 return True, f"📙 Previous content reference"
-        
+
         # ============================================================
         # PRIORITY 3: ANAPHORIC PRONOUNS
         # ============================================================
-        
+
         if len(chat_history) <= 2:
             anaphora_starters = ["it", "that", "this", "them", "these", "those"]
-            
+
             if len(words) > 0 and words[0] in anaphora_starters:
                 # Exception: "it is X" questions (not necessarily follow-ups)
                 if len(words) >= 3 and words[1] in ["is", "was", "will", "would"]:
-                    if words[2] not in ["possible", "true", "correct", "right", "okay", "ok"]:
+                    if words[2] not in [
+                        "possible",
+                        "true",
+                        "correct",
+                        "right",
+                        "okay",
+                        "ok",
+                    ]:
                         return True, f"👉 Anaphoric start: '{words[0]}'"
                 else:
                     return True, f"👉 Anaphoric start: '{words[0]}'"
-        
+
         # ============================================================
         # PRIORITY 4: CLARIFICATION REQUESTS
         # ============================================================
-        
+
         clarification_patterns = [
             r"^what\s+do\s+you\s+mean",
             r"^what\s+does\s+(that|this|it)\s+mean",
@@ -5373,15 +5656,15 @@ class ImprovedIntentClassifier:
             r"^go\s+(deeper|further|into\s+detail)",
             r"^elaborate\s+on",
         ]
-        
+
         for pattern in clarification_patterns:
             if re.search(pattern, query_lower):
                 return True, f"❓ Clarification request"
-        
+
         # ============================================================
         # PRIORITY 5: FOLLOW-UP CONNECTORS
         # ============================================================
-        
+
         connector_patterns = [
             r"^(what|how)\s+about",
             r"^tell\s+me\s+(about|more)",
@@ -5391,27 +5674,29 @@ class ImprovedIntentClassifier:
             r"^(but|however)\s+(what|how|why)",
             r"^(show|give|provide)\s+me",
         ]
-        
+
         for pattern in connector_patterns:
             if re.search(pattern, query_lower):
                 return True, f"🔄 Follow-up connector"
-        
+
         # ============================================================
         # NO FOLLOW-UP DETECTED
         # ============================================================
-        
+
         return False, ""
 
-    def _detect_code_intent(self, q: str, words: List[str]) -> Optional[IntentClassification]:
+    def _detect_code_intent(
+        self, q: str, words: List[str]
+    ) -> Optional[IntentClassification]:
         """
         Enhanced code detection with better pattern matching
         🔥 CRITICAL: Must distinguish "write code" from "what does the code do"
         """
         has_verb = any(verb in words for verb in self.CODE_VERBS)
-        
+
         if not has_verb:
             return None
-        
+
         # 🔥 CRITICAL FIX: Detect explanatory questions about code (NOT code generation)
         explanatory_patterns = [
             r"^what (does|do|is|are) (the|this|that) code",
@@ -5420,27 +5705,43 @@ class ImprovedIntentClassifier:
             r"^explain (the|this|that) code",
             r"^describe (the|this|that) code",
         ]
-        
+
         for pattern in explanatory_patterns:
             if re.match(pattern, q):
                 # This is asking ABOUT code, not requesting code generation
                 return None  # Let follow-up detection handle it
-        
+
         # 🔥 ENHANCED: Multiple code detection signals
         has_object = any(obj in words for obj in self.CODE_OBJECTS)
         algorithm_keywords = ["sort", "search", "tree", "graph", "queue", "stack"]
         has_algorithm = any(kw in words for kw in algorithm_keywords)
-        
+
         # 🔥 NEW: Programming language indicators
-        language_keywords = ["python", "javascript", "java", "c++", "html", "css", "react", "typescript"]
+        language_keywords = [
+            "python",
+            "javascript",
+            "java",
+            "c++",
+            "html",
+            "css",
+            "react",
+            "typescript",
+        ]
         has_language = any(lang in q for lang in language_keywords)
-        
+
         # 🔥 NEW: Code-related phrases (for GENERATION, not explanation)
-        code_generation_phrases = ["code for", "code to", "simple code", "example code", "sample code", "write code"]
+        code_generation_phrases = [
+            "code for",
+            "code to",
+            "simple code",
+            "example code",
+            "sample code",
+            "write code",
+        ]
         has_code_phrase = any(phrase in q for phrase in code_generation_phrases)
-        
+
         starts_with_anaphora = len(words) > 0 and words[0] in self.ANAPHORA
-        
+
         # 🔥 FIXED: Only trigger if it's clearly a code GENERATION request
         if has_verb and not starts_with_anaphora:
             if has_object or has_algorithm or has_language or has_code_phrase:
@@ -5452,26 +5753,28 @@ class ImprovedIntentClassifier:
                     reasoning += " + code object"
                 if has_code_phrase:
                     reasoning += " + code phrase"
-                
+
                 return IntentClassification(
                     intent=QueryIntent.CODE,
                     confidence=confidence,
                     reasoning=reasoning,
                     needs_pdf=False,
-                    needs_context=False
+                    needs_context=False,
                 )
-        
+
         return None
+
 
 # ============================================================
 # Re-initialize the global classifier
 # ============================================================
 INTENT_CLASSIFIER = ImprovedIntentClassifier(use_embeddings=True)
-print("✅ Enhanced intent classifier with comprehensive follow-up detection initialized")
+print(
+    "✅ Enhanced intent classifier with comprehensive follow-up detection initialized"
+)
 # ============================================================
 # IMPROVED INTENT CLASSIFIER
 # ============================================================
-
 
 
 def classify_intent_fast(query: str, chat_history: List = None) -> str:
@@ -5493,57 +5796,61 @@ def build_conversation_context(chat_history, max_turns=4, verbose=True):
     """
     Build comprehensive context from recent conversation history.
     🔥 ENHANCED: Preserves code blocks completely for follow-up questions
-    
+
     Args:
         chat_history: List of conversation exchanges
         max_turns: Maximum number of previous exchanges to include
         verbose: Include full AI responses (True) or summaries (False)
-    
+
     Returns:
         Formatted context string with previous Q&A
     """
     if not chat_history:
         return ""
-    
+
     # Get recent exchanges
     recent = chat_history[-max_turns:]
     context_parts = []
-    
+
     for i, entry in enumerate(recent, 1):
         user_msg = entry.get("user", "")
         ai_msg = entry.get("ai", "")
-        
+
         if not user_msg:
             continue
-        
+
         # Build context block
         block = f"**Previous Exchange {i}:**\n"
         block += f"User asked: {user_msg}\n\n"
-        
+
         if ai_msg:
             if verbose:
                 # 🔥 CRITICAL FIX: Check if response contains code
                 has_code = "```" in ai_msg
-                
+
                 if has_code:
                     # For code responses, preserve EVERYTHING
                     # Extract code blocks with better preservation
                     import re
-                    
+
                     # Find all code blocks
-                    code_blocks = re.findall(r'```[\w]*\n(.*?)```', ai_msg, re.DOTALL)
-                    
+                    code_blocks = re.findall(r"```[\w]*\n(.*?)```", ai_msg, re.DOTALL)
+
                     if code_blocks:
                         block += "Assistant provided this code:\n\n"
-                        
+
                         # Include ALL code blocks
                         for code in code_blocks:
                             block += f"```\n{code.strip()}\n```\n\n"
-                        
+
                         # Add explanation (non-code parts)
-                        text_parts = re.split(r'```[\w]*\n.*?```', ai_msg, flags=re.DOTALL)
-                        explanation = " ".join(part.strip() for part in text_parts if part.strip())
-                        
+                        text_parts = re.split(
+                            r"```[\w]*\n.*?```", ai_msg, flags=re.DOTALL
+                        )
+                        explanation = " ".join(
+                            part.strip() for part in text_parts if part.strip()
+                        )
+
                         if explanation and len(explanation) > 20:
                             # Keep full explanation if it's about the code
                             # Only truncate if it's VERY long (>800 chars)
@@ -5553,34 +5860,38 @@ def build_conversation_context(chat_history, max_turns=4, verbose=True):
                     else:
                         # Code markers but no blocks found - include full response
                         block += f"Assistant responded:\n{ai_msg}\n\n"
-                
+
                 else:
                     # No code - standard truncation
                     max_chars = 500
                     clean_ai = ai_msg
-                    
+
                     # Remove source citations
-                    clean_ai = re.sub(r'📄 \*\*Source.*?\n', '', clean_ai, flags=re.MULTILINE)
-                    clean_ai = re.sub(r'🌐 \*\*Sources.*?\n', '', clean_ai, flags=re.MULTILINE)
-                    clean_ai = re.sub(r'\n\n---\n\n', '\n', clean_ai)
-                    
+                    clean_ai = re.sub(
+                        r"📄 \*\*Source.*?\n", "", clean_ai, flags=re.MULTILINE
+                    )
+                    clean_ai = re.sub(
+                        r"🌐 \*\*Sources.*?\n", "", clean_ai, flags=re.MULTILINE
+                    )
+                    clean_ai = re.sub(r"\n\n---\n\n", "\n", clean_ai)
+
                     # Remove excessive emojis
-                    clean_ai = re.sub(r'[\U0001F300-\U0001F9FF]{2,}', '', clean_ai)
-                    
+                    clean_ai = re.sub(r"[\U0001F300-\U0001F9FF]{2,}", "", clean_ai)
+
                     # Truncate intelligently
                     if len(clean_ai) > max_chars:
                         truncated = clean_ai[:max_chars]
                         last_period = max(
-                            truncated.rfind('.'),
-                            truncated.rfind('!'),
-                            truncated.rfind('?')
+                            truncated.rfind("."),
+                            truncated.rfind("!"),
+                            truncated.rfind("?"),
                         )
-                        
+
                         if last_period > max_chars * 0.6:
-                            clean_ai = truncated[:last_period + 1]
+                            clean_ai = truncated[: last_period + 1]
                         else:
                             clean_ai = truncated + "..."
-                    
+
                     block += f"Assistant responded: {clean_ai}\n\n"
             else:
                 # Summary mode
@@ -5588,58 +5899,62 @@ def build_conversation_context(chat_history, max_turns=4, verbose=True):
                 if len(ai_msg) > 100:
                     summary += "..."
                 block += f"Assistant: {summary}\n\n"
-        
+
         context_parts.append(block)
-    
+
     if context_parts:
-        header = "**CONVERSATION CONTEXT** (for reference):\n" + "="*60 + "\n\n"
-        footer = "\n" + "="*60 + "\n"
+        header = "**CONVERSATION CONTEXT** (for reference):\n" + "=" * 60 + "\n\n"
+        footer = "\n" + "=" * 60 + "\n"
         return header + "\n".join(context_parts) + footer
-    
+
     return ""
 
 
-
-def build_code_aware_context(chat_history: List, max_chars: int = 2500) -> str:  # ✅ Increased limit
+def build_code_aware_context(
+    chat_history: List, max_chars: int = 2500
+) -> str:  # ✅ Increased limit
     """
     Build context that PRESERVES code blocks for follow-up questions.
     ✅ FIXED: Now includes multiple previous exchanges
     """
     if not chat_history:
         return ""
-    
+
     # ✅ NEW: Include last 3 exchanges instead of just 1
     relevant_history = chat_history[-3:]  # Get last 3 exchanges
-    
+
     context = "**CONVERSATION HISTORY:**\n\n"
-    
+
     for i, entry in enumerate(relevant_history, 1):
         user_msg = entry.get("user", "")
         ai_msg = entry.get("ai", "")
-        
+
         if not user_msg or not ai_msg:
             continue
-        
+
         context += f"**Exchange {i}:**\n"
         context += f"User: {user_msg}\n\n"
-        
+
         # Check if response contains code
         has_code = "```" in ai_msg
-        
+
         if has_code:
             # Extract and preserve code blocks
             import re
-            code_blocks = re.findall(r'```[\w]*\n(.*?)```', ai_msg, re.DOTALL)
-            
+
+            code_blocks = re.findall(r"```[\w]*\n(.*?)```", ai_msg, re.DOTALL)
+
             if code_blocks:
                 context += "Assistant provided code:\n\n"
                 for code in code_blocks:
                     context += f"```\n{code.strip()}\n```\n\n"
-                
+
                 # Add explanation
-                text_parts = re.split(r'```[\w]*\n.*?```', ai_msg, flags=re.DOTALL)
-                explanation = " ".join(part.strip() for part in text_parts if part.strip())
-                
+                text_parts = re.split(r"```[\w]*\n.*?```", ai_msg, flags=re.DOTALL)
+                explanation = " ".join(
+                    part.strip() for part in text_parts if part.strip()
+                )
+
                 if explanation and len(explanation) > 20:
                     if len(explanation) > 300:
                         explanation = explanation[:300] + "..."
@@ -5648,22 +5963,27 @@ def build_code_aware_context(chat_history: List, max_chars: int = 2500) -> str: 
             # No code - truncate text response
             truncated = ai_msg[:400] + "..." if len(ai_msg) > 400 else ai_msg
             context += f"Assistant: {truncated}\n\n"
-        
+
         context += "---\n\n"
-    
+
     context += "**Current question refers to the above conversation.**\n"
-    
+
     # Truncate if too long
     if len(context) > max_chars:
         # Keep most recent exchange fully
         recent_exchange_marker = f"**Exchange {len(relevant_history)}:**"
         marker_pos = context.rfind(recent_exchange_marker)
-        
+
         if marker_pos > 0:
             # Keep everything from the last exchange
-            context = context[:1000] + "\n\n[...earlier exchanges truncated...]\n\n" + context[marker_pos:]
-    
+            context = (
+                context[:1000]
+                + "\n\n[...earlier exchanges truncated...]\n\n"
+                + context[marker_pos:]
+            )
+
     return context
+
 
 def build_memory_context():
     """
@@ -5689,6 +6009,7 @@ def build_memory_context():
     except Exception as e:
         debug_log(f"Error building memory context: {e}")
         return ""
+
 
 # ----------------------------
 # Clean LLM output
@@ -6043,7 +6364,9 @@ def rag_pdf_tutor(
         results = _normalize_searchresult_scores(results)
         pdf_score = sum(r.score for r in results) / len(results)
 
-        prompt = build_prompt(persona, cleaned_query, pdf_context, use_gemini=use_gemini)
+        prompt = build_prompt(
+            persona, cleaned_query, pdf_context, use_gemini=use_gemini
+        )
 
         # Get LLM response
         llm_out = llm(
@@ -6135,6 +6458,7 @@ def save_chat_to_database(
     except Exception as e:
         debug_log(f"⚠️ Failed to save chat to database: {e}")
 
+
 def try_rag_retrieval(query: str, top_k: int = 5):
     """
     Try RAG retrieval using new system
@@ -6143,37 +6467,33 @@ def try_rag_retrieval(query: str, top_k: int = 5):
     if RAG_ADAPTER is None:
         debug_log("⚠️ RAG adapter not available")
         return "", [], False
-    
+
     try:
         # Get context for LLM
         context, results = RAG_ADAPTER.get_context_for_llm(
-            query,
-            top_k=top_k,
-            max_length=2000
+            query, top_k=top_k, max_length=2000
         )
-        
+
         if context and results:
             debug_log(f"✅ RAG found {len(results)} results")
-            
+
             # Format for compatibility
-            sources_list = [
-                (r.chunk.source_name, r.chunk.chunk_id)
-                for r in results
-            ]
-            
+            sources_list = [(r.chunk.source_name, r.chunk.chunk_id) for r in results]
+
             return context, sources_list, True
         else:
             debug_log("⚠️ RAG returned no results")
             return "", [], False
-    
+
     except Exception as e:
         debug_log(f"❌ RAG retrieval error: {e}")
         return "", [], False
 
+
 def web_search(
     query: str,
     *,
-    mode: str = "fast",   # "fast" | "deep"
+    mode: str = "fast",  # "fast" | "deep"
     max_results: int = 6,
     force_refresh: bool = False,
 ):
@@ -6249,6 +6569,7 @@ def web_search(
 
     return context, results
 
+
 def _format_context(query: str, results):
     if not results:
         return ""
@@ -6272,6 +6593,7 @@ def _format_context(query: str, results):
 
     return "\n".join(out)
 
+
 # ============================================================
 # FILENAME QUERY HANDLER - Add to yan.py
 # ============================================================
@@ -6279,204 +6601,234 @@ def _format_context(query: str, results):
 import re
 from typing import Optional, Tuple
 
+
 def detect_filename_query(query: str) -> Optional[str]:
     """
     Detect if user is asking about a specific PDF file by name
-    
+
     Returns:
         Filename if detected, None otherwise
     """
     query_lower = query.lower()
-    
+
     # Pattern 1: "what does [filename.pdf] talk about"
     pattern1 = r"what (?:does|is in|about) ([a-zA-Z0-9_\-]+\.pdf)"
     match = re.search(pattern1, query_lower, re.IGNORECASE)
     if match:
         return match.group(1)
-    
+
     # Pattern 2: "tell me about [filename.pdf]"
     pattern2 = r"tell me about ([a-zA-Z0-9_\-]+\.pdf)"
     match = re.search(pattern2, query_lower, re.IGNORECASE)
     if match:
         return match.group(1)
-    
+
     # Pattern 3: "summarize [filename.pdf]"
     pattern3 = r"summarize ([a-zA-Z0-9_\-]+\.pdf)"
     match = re.search(pattern3, query_lower, re.IGNORECASE)
     if match:
         return match.group(1)
-    
+
     # Pattern 4: Direct mention of .pdf file
     pattern4 = r"([a-zA-Z0-9_\-]+\.pdf)"
     match = re.search(pattern4, query_lower)
-    if match and any(keyword in query_lower for keyword in ['what', 'about', 'talk', 'contain', 'cover', 'discuss']):
+    if match and any(
+        keyword in query_lower
+        for keyword in ["what", "about", "talk", "contain", "cover", "discuss"]
+    ):
         return match.group(1)
-    
+
     return None
 
 
 def retrieve_by_filename(filename: str) -> Tuple[str, float, list]:
     """
     Retrieve all chunks from a specific PDF file
-    
+
     Args:
         filename: Name of the PDF file
-    
+
     Returns:
         (context_string, confidence_score, sources_list)
     """
     if not RAG_ADAPTER:
         debug_log("⚠️ RAG_ADAPTER not available")
         return "", 0.0, []
-    
+
     try:
         cursor = RAG_ADAPTER.rag_db.conn.cursor()
-        
+
         # Search for exact filename match (case-insensitive)
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT chunk_id, content, source_name, confidence
             FROM knowledge_chunks
             WHERE source_type = 'pdf_document'
             AND LOWER(source_name) = LOWER(?)
             ORDER BY chunk_id
             LIMIT 10
-        """, (filename,))
-        
+        """,
+            (filename,),
+        )
+
         rows = cursor.fetchall()
-        
+
         if not rows:
             debug_log(f"❌ No chunks found for PDF: {filename}")
-            
+
             # Try fuzzy match
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT DISTINCT source_name
                 FROM knowledge_chunks
                 WHERE source_type = 'pdf_document'
                 AND LOWER(source_name) LIKE LOWER(?)
-            """, (f"%{filename}%",))
-            
+            """,
+                (f"%{filename}%",),
+            )
+
             similar = cursor.fetchall()
-            
+
             if similar:
-                similar_names = [row['source_name'] for row in similar]
+                similar_names = [row["source_name"] for row in similar]
                 debug_log(f"💡 Found similar PDFs: {similar_names}")
                 return "", 0.0, []
-            
+
             return "", 0.0, []
-        
+
         debug_log(f"✅ Found {len(rows)} chunks for PDF: {filename}")
-        
+
         # Build context from chunks
         context_parts = []
         sources = []
-        
+
         for i, row in enumerate(rows, 1):
             context_parts.append(f"[Section {i}]\n{row['content']}")
-            sources.append((row['source_name'], row['chunk_id']))
-        
+            sources.append((row["source_name"], row["chunk_id"]))
+
         context = f"Content from {filename}:\n\n" + "\n\n---\n\n".join(context_parts)
-        
+
         # High confidence since we found exact file match
         confidence = 0.9
-        
+
         return context, confidence, sources
-        
+
     except Exception as e:
         debug_log(f"❌ Error retrieving by filename: {e}")
         import traceback
+
         traceback.print_exc()
         return "", 0.0, []
+
 
 def quick_filename_patch():
     """
     Add this code block at the START of your pdf_tutor_enhanced function,
     right after the query validation checks
     """
-    
+
     # 🔥 Quick filename detection
     detected_filename = detect_filename_query(query)
-    
+
     if detected_filename and RAG_ADAPTER:
         context, confidence, file_sources = retrieve_by_filename(detected_filename)
-        
+
         if context:
             # Generate answer using file content
             prompt = build_prompt(
                 persona + f"\n\nSummarize what {detected_filename} covers:",
                 query,
                 context,
-                use_gemini=use_gemini
+                use_gemini=use_gemini,
             )
-            
+
             # Detect Gemini request
             use_gemini_for_query, cleaned_query = detect_gemini_request(query)
             if use_gemini_for_query:
                 query = cleaned_query  # Use cleaned query
                 debug_log("🔷 User requested Gemini")
-            
+
             llm_out = query_llm_smart(
-                prompt, 
-                max_tokens=500, 
-                temperature=0.4,
-                use_gemini=use_gemini_for_query
+                prompt, max_tokens=500, temperature=0.4, use_gemini=use_gemini_for_query
             )
             answer = process_llm_answer(llm_out)
             answer = humanize_response_sentient(answer, query, chat_history)
-            
+
             final_answer = answer + f"\n\n📄 **Source:** {detected_filename}"
             save_message_to_history(query, final_answer)
-            
+
             return final_answer, confidence, file_sources, False
 
 
 def detect_permission_response(query: str) -> str:
     """
     Detect if user is granting/denying permission
-    
+
     Returns: 'grant', 'deny', or 'unclear'
     """
     query_lower = query.lower().strip()
-    
+
     # Grant keywords
     grant_phrases = [
-        'yes', 'yeah', 'yep', 'sure', 'ok', 'okay',
-        'permission granted', 'go ahead', 'proceed',
-        'allow', 'approved', 'granted', 'do it'
+        "yes",
+        "yeah",
+        "yep",
+        "sure",
+        "ok",
+        "okay",
+        "permission granted",
+        "go ahead",
+        "proceed",
+        "allow",
+        "approved",
+        "granted",
+        "do it",
     ]
-    
+
     # Deny keywords
     deny_phrases = [
-        'no', 'nope', 'nah', 'deny', 'denied',
-        'permission denied', 'skip', 'cancel',
-        "don't", 'stop', 'refuse'
+        "no",
+        "nope",
+        "nah",
+        "deny",
+        "denied",
+        "permission denied",
+        "skip",
+        "cancel",
+        "don't",
+        "stop",
+        "refuse",
     ]
-    
+
     # Check for exact matches or phrases
     for phrase in grant_phrases:
-        if query_lower == phrase or query_lower.startswith(phrase + ' '):
-            return 'grant'
-    
+        if query_lower == phrase or query_lower.startswith(phrase + " "):
+            return "grant"
+
     for phrase in deny_phrases:
-        if query_lower == phrase or query_lower.startswith(phrase + ' '):
-            return 'deny'
-    
-    return 'unclear'
+        if query_lower == phrase or query_lower.startswith(phrase + " "):
+            return "deny"
+
+    return "unclear"
+
 
 """
 STEP 4: Add this function to detect "use gemini:" prefix (add around line 5000-5100)
 """
+
+
 def detect_gemini_request(query: str) -> tuple[bool, str]:
     """
     Detect if user wants to use Gemini for this query
-    
+
     Args:
         query: User's query
-        
+
     Returns:
         (use_gemini, cleaned_query)
     """
     query_lower = query.lower().strip()
-    
+
     # Check for "use gemini:" prefix
     gemini_triggers = [
         "use gemini:",
@@ -6484,61 +6836,67 @@ def detect_gemini_request(query: str) -> tuple[bool, str]:
         "ask gemini:",
         "with gemini:",
     ]
-    
+
     for trigger in gemini_triggers:
         if query_lower.startswith(trigger):
             # Remove the trigger and return cleaned query
-            cleaned_query = query[len(trigger):].strip()
+            cleaned_query = query[len(trigger) :].strip()
             return True, cleaned_query
-    
+
     return False, query
+
 
 """
 STEP 5: Add this wrapper function to route between local LLM and Gemini
 """
+
 
 def query_llm_smart(
     prompt: str,
     max_tokens: int = 8000,
     temperature: float = 0.4,
     use_gemini: bool = False,
-    **kwargs
+    **kwargs,
 ) -> Dict[str, Any]:
     """
     Smart LLM router - uses Gemini or local LLM based on preference
-    
+
     Args:
         prompt: Input prompt
         max_tokens: Max tokens to generate (default 8000 to prevent cutoffs)
         temperature: Sampling temperature
         use_gemini: Force use of Gemini
         **kwargs: Additional parameters
-        
+
     Returns:
         Response dict with 'choices' field
     """
     global gemini_llm, llm, USE_GEMINI
-    
+
     # Determine which LLM to use
     should_use_gemini = use_gemini or USE_GEMINI
-    
+
     if should_use_gemini:
         if gemini_llm is None:
-            debug_log("⚠️ Gemini requested but not initialized, falling back to local LLM")
+            debug_log(
+                "⚠️ Gemini requested but not initialized, falling back to local LLM"
+            )
         else:
             try:
                 debug_log("🔷 Using Gemini LLM")
                 # ✅ NEW: Pass force_web_search parameter for auto-detection
                 return gemini_llm(
-                    prompt, 
-                    max_tokens=max_tokens, 
+                    prompt,
+                    max_tokens=max_tokens,
                     temperature=temperature,
-                    force_web_search=kwargs.pop('force_web_search', None),  # Auto-detect current info needs
-                    **kwargs
+                    force_web_search=kwargs.pop(
+                        "force_web_search", None
+                    ),  # Auto-detect current info needs
+                    **kwargs,
                 )
             except Exception as e:
                 debug_log(f"❌ Gemini error: {e}, falling back to local LLM")
-    
+
     # Fall back to local LLM
     debug_log("🔹 Passing results to local LLM...")
     # Remove personality-only fields before calling LLM
@@ -6546,12 +6904,7 @@ def query_llm_smart(
     safe_kwargs.pop("personality_result", None)
     safe_kwargs.pop("original_query", None)
 
-    result = llm(
-        prompt,
-        max_tokens=max_tokens,
-        temperature=temperature,
-        **safe_kwargs
-    )
+    result = llm(prompt, max_tokens=max_tokens, temperature=temperature, **safe_kwargs)
 
     # ====== ENHANCE LLM RESULT WITH PERSONALITY ======
     try:
@@ -6568,10 +6921,8 @@ def query_llm_smart(
                 if personality_result.get("suggestion"):
                     text = text + "\n\n" + personality_result["suggestion"]
 
-                #text = enhance_response(text, original_query)
+                # text = enhance_response(text, original_query)
                 result["choices"][0]["text"] = text
-
-
 
     except Exception as e:
         debug_log(f"⚠️ Personality enhancement error: {e}")
@@ -6580,47 +6931,55 @@ def query_llm_smart(
 
     return result
 
+
 """
 STEP 7: Add command to enable/disable Gemini globally (optional)
 
 Add this to your command processing (if you have a /command system)
 """
 
+
 def process_gemini_commands(query: str) -> tuple[bool, str]:
     """
     Process Gemini-related commands
-    
+
     Returns:
         (handled, response)
     """
     global USE_GEMINI, gemini_llm
-    
+
     query_lower = query.lower().strip()
-    
+
     if query_lower in ["/gemini on", "/enable gemini", "/use gemini"]:
         if gemini_llm is None:
-            return True, "⚠️ Gemini not initialized. Set GEMINI_API_KEY environment variable first."
+            return (
+                True,
+                "⚠️ Gemini not initialized. Set GEMINI_API_KEY environment variable first.",
+            )
         USE_GEMINI = True
         return True, "✅ Gemini enabled for all queries. Use '/gemini off' to disable."
-    
+
     elif query_lower in ["/gemini off", "/disable gemini", "/local llm"]:
         USE_GEMINI = False
         return True, "✅ Switched back to local LLM."
-    
+
     elif query_lower in ["/gemini status", "/which model"]:
         if USE_GEMINI:
             status = "🔷 Currently using: **Gemini** (globally enabled)"
         else:
             status = "🔹 Currently using: **Local LLM**"
-        
+
         gemini_status = "✅ Available" if gemini_llm else "❌ Not initialized"
         status += f"\n\nGemini status: {gemini_status}"
         return True, status
-    
+
     return False, ""
+
+
 # ============================================================
 # LIGHT vs DEEP SEARCH IMPLEMENTATION
 # ============================================================
+
 
 def pdf_tutor_with_explicit_routing(
     query,
@@ -6637,10 +6996,10 @@ def pdf_tutor_with_explicit_routing(
 ):
     """
     Main query handler with explicit routing and universal follow-up support.
-    
+
     REWRITTEN VERSION - Cleaned up, no duplicate follow-up logic.
     Follow-ups are handled by build_prompt() automatically in all modes.
-    
+
     Args:
         query: User's question
         chunks: PDF text chunks (legacy, kept for compatibility)
@@ -6651,13 +7010,14 @@ def pdf_tutor_with_explicit_routing(
         allow_web: Whether web search is enabled
         max_code_tokens: Max tokens for code generation
         search_mode: "auto", "llm_only", "pdf_only", "web_only", "pdf_web_llm"
-    
+
     Returns:
         Tuple: (answer, confidence, result_sources, search_used)
     """
 
     if use_gemini is None:
         use_gemini = USE_GEMINI
+
     # ============================================================
     # THOUGHT PROCESS TRACKING - REAL-TIME STREAMING
     # ============================================================
@@ -6665,25 +7025,29 @@ def pdf_tutor_with_explicit_routing(
         """Stream reasoning steps in real-time to frontend"""
         formatted_step = f"{icon} {step}"
         debug_log(f"💭 THOUGHT: {step}")
-        
+
         # Stream immediately if callback provided
         if thought_stream_callback:
             try:
                 thought_stream_callback(formatted_step)
             except Exception as e:
                 debug_log(f"⚠️ Thought streaming error: {e}")
-    
+
     # Initial thought
-    add_thought(f"Received query: '{query[:60]}{'...' if len(query) > 60 else ''}'", "🔍")
+    add_thought(
+        f"Received query: '{query[:60]}{'...' if len(query) > 60 else ''}'", "🔍"
+    )
     # ============================================================
     # STEP 1: INITIALIZATION - Load chat history from chat_history.json
     # ============================================================
     try:
         chat_history, chat_count = load_chat_history()  # Load from chat_history.json
         persistent_data["chat_history"] = chat_history
-        
-        debug_log(f"📚 FUNCTION START: Loaded {len(chat_history)} messages from chat_history.json")
-        
+
+        debug_log(
+            f"📚 FUNCTION START: Loaded {len(chat_history)} messages from chat_history.json"
+        )
+
         if chat_history:
             last_msg = chat_history[-1]
             debug_log(f"   Last message: '{last_msg.get('user', '')[:50]}'")
@@ -6694,18 +7058,19 @@ def pdf_tutor_with_explicit_routing(
 
     # Track history status
     if chat_history:
-        add_thought(f"Loaded conversation history ({len(chat_history)} previous messages)", "📚")
+        add_thought(
+            f"Loaded conversation history ({len(chat_history)} previous messages)", "📚"
+        )
     else:
         add_thought("Starting fresh conversation", "🆕")
     # ============================================================
     # STEP 2: VALIDATION
     # ============================================================
     cleaned_query = (query or "").strip()
-    
+
     if not cleaned_query:
         return "Hey — what's on your mind?", 0.0, [], False
 
-    
     if llm is None:
         return "❌ AI model not loaded.", 0.0, [], False
 
@@ -6714,13 +7079,12 @@ def pdf_tutor_with_explicit_routing(
     is_compliment = False
 
     # Generate suggestions
-    #suggestion = get_suggestion(cleaned_query)
-    #if suggestion:
+    # suggestion = get_suggestion(cleaned_query)
+    # if suggestion:
     #    add_thought("Preparing helpful suggestion", "💡")
 
-
     query_lower = cleaned_query.lower()
-    
+
     add_thought("Analyzing query", "🔍")
     # ============================================================
     # STEP 3: USERNAME EXTRACTION (Priority 1)
@@ -6733,30 +7097,40 @@ def pdf_tutor_with_explicit_routing(
         time.sleep(2.0)
         response = f"Nice to meet you, {extracted_name}. I'll remember that. 👋"
         # Save to chat_history.json
-        chat_history.append({"user": query, "ai": response, "timestamp": datetime.now().isoformat()})
+        chat_history.append(
+            {"user": query, "ai": response, "timestamp": datetime.now().isoformat()}
+        )
         save_chat_history(chat_history, len(chat_history))
         # Update user stats
         user_manager.add_to_chat_history(query, response)
         return response, 1.0, [], False
-    
+
     # ============================================================
     # STEP 4: GREETING CHECK (Priority 2)
     # ============================================================
     greeting_patterns = [
-        "hi", "hello", "hey", "sup", "good morning", "good afternoon",
-        "good evening", "how are you", "how r u",
-        "what's up", "whats up", "wassup"
+        "hi",
+        "hello",
+        "hey",
+        "sup",
+        "good morning",
+        "good afternoon",
+        "good evening",
+        "how are you",
+        "how r u",
+        "what's up",
+        "whats up",
+        "wassup",
     ]
-    
+
     query_words = query_lower.replace("?", "").replace("!", "").split()
-    
-    if (
-        query_lower in greeting_patterns or
-        (len(query_words) <= 3 and any(g in query_lower for g in greeting_patterns))
+
+    if query_lower in greeting_patterns or (
+        len(query_words) <= 3 and any(g in query_lower for g in greeting_patterns)
     ):
         user_name = user_manager.get_user_data("name")
         name_part = f" {user_name}" if user_name else ""
-        
+
         # Derive the real time-of-day period from the clock
         _greet_hour = datetime.now().hour
         if 5 <= _greet_hour < 12:
@@ -6770,20 +7144,22 @@ def pdf_tutor_with_explicit_routing(
 
         # Time-aware responses for each period
         _tod_responses = {
-            "morning":   f"Morning{name_part}. What are we getting into today?",
+            "morning": f"Morning{name_part}. What are we getting into today?",
             "afternoon": f"Hey{name_part}. What's up?",
-            "evening":   f"Evening{name_part}. What's on your mind?",
-            "night":     f"Still up{name_part}? What are we doing?",
+            "evening": f"Evening{name_part}. What's on your mind?",
+            "night": f"Still up{name_part}? What are we doing?",
         }
 
         greetings_map = {
             "how are you": f"Doing well{name_part}, thanks for asking. What's going on?",
-            "good morning":   _tod_responses.get("morning",   _tod_responses[_tod_label]),
-            "good afternoon": _tod_responses.get("afternoon", _tod_responses[_tod_label]),
-            "good evening":   _tod_responses.get("evening",   _tod_responses[_tod_label]),
-            "hi":    _tod_responses[_tod_label],
+            "good morning": _tod_responses.get("morning", _tod_responses[_tod_label]),
+            "good afternoon": _tod_responses.get(
+                "afternoon", _tod_responses[_tod_label]
+            ),
+            "good evening": _tod_responses.get("evening", _tod_responses[_tod_label]),
+            "hi": _tod_responses[_tod_label],
             "hello": _tod_responses[_tod_label],
-            "hey":   _tod_responses[_tod_label],
+            "hey": _tod_responses[_tod_label],
         }
         greeting_response = None
         for pattern, response in greetings_map.items():
@@ -6799,15 +7175,14 @@ def pdf_tutor_with_explicit_routing(
         time.sleep(1.0)
         save_message_to_history(query, greeting_response)
         return greeting_response, 1.0, [], False
-    
+
     # ============================================================
     # STEP 4.5: GEMINI COMMAND DETECTION (Priority 2.5)
     # ============================================================
-    
+
     # Initialize Gemini flag
     use_gemini_for_query = USE_GEMINI  # Start with global setting
 
-    
     # Check for Gemini slash commands first (/gemini on, /gemini off, etc.)
     gemini_command_handled, gemini_response = process_gemini_commands(cleaned_query)
     if gemini_command_handled:
@@ -6816,19 +7191,18 @@ def pdf_tutor_with_explicit_routing(
         save_message_to_history(query, gemini_response)
         return gemini_response, 1.0, [], False
 
-    
     # Check for "use gemini:" prefix in query
     detected_gemini, cleaned_query_no_prefix = detect_gemini_request(cleaned_query)
-    
+
     if detected_gemini:
         debug_log(f"🔷 GEMINI REQUEST DETECTED: '{cleaned_query_no_prefix}'")
         add_thought("Routing to Gemini API for processing", "🔷")
         use_gemini_for_query = True
-        
+
         # Update the query to the cleaned version (without "use gemini:" prefix)
         cleaned_query = cleaned_query_no_prefix
         query_lower = cleaned_query.lower()
-        
+
         # Check if Gemini is initialized
         if gemini_llm is None:
             debug_log("⚠️ Gemini requested but not initialized")
@@ -6839,34 +7213,64 @@ def pdf_tutor_with_explicit_routing(
     # STEP 5: EXPLICIT WEB SEARCH COMMANDS (Priority 3)
     # ============================================================
     web_search_triggers = [
-        "search:", "web search:", "look up:",
-        "deep search:", "detailed search:", "comprehensive search:"
-    ]
-    
-    deep_search_triggers = [
-        "deep search:", "detailed search:", "comprehensive search:"
-    ]
-    
-    news_rag_triggers = [
-        "news:", "tech news:", "latest:", "recent:", "current events:",
-        "what's new in", "what is new in", "what happened with",
-        "latest news", "recent news", "current news",
-        "this week in", "today in tech", "trending in",
+        "search:",
+        "web search:",
+        "look up:",
+        "deep search:",
+        "detailed search:",
+        "comprehensive search:",
     ]
 
-    is_news_query = any(query_lower.startswith(t) for t in news_rag_triggers) or \
-                    any(t in query_lower for t in [
-                        "latest news", "recent news", "tech news",
-                        "what's happening in", "current developments",
-                        "new release", "just announced", "newly released",
-                        "this week in tech", "recently announced",
-                        "any news", "news on", "news about",
-                        "updates on", "update on", "what's going on with",
-                        "anything on", "anything about", "anything new",
-                        "fill me in on", "catch me up on",
-                        "news briefing", "news summary", "news roundup",
-                        "what's in the news", "give me the news",
-                    ])
+    deep_search_triggers = ["deep search:", "detailed search:", "comprehensive search:"]
+
+    news_rag_triggers = [
+        "news:",
+        "tech news:",
+        "latest:",
+        "recent:",
+        "current events:",
+        "what's new in",
+        "what is new in",
+        "what happened with",
+        "latest news",
+        "recent news",
+        "current news",
+        "this week in",
+        "today in tech",
+        "trending in",
+    ]
+
+    is_news_query = any(query_lower.startswith(t) for t in news_rag_triggers) or any(
+        t in query_lower
+        for t in [
+            "latest news",
+            "recent news",
+            "tech news",
+            "what's happening in",
+            "current developments",
+            "new release",
+            "just announced",
+            "newly released",
+            "this week in tech",
+            "recently announced",
+            "any news",
+            "news on",
+            "news about",
+            "updates on",
+            "update on",
+            "what's going on with",
+            "anything on",
+            "anything about",
+            "anything new",
+            "fill me in on",
+            "catch me up on",
+            "news briefing",
+            "news summary",
+            "news roundup",
+            "what's in the news",
+            "give me the news",
+        ]
+    )
 
     is_web_search = any(query_lower.startswith(t) for t in web_search_triggers)
     is_deep_search = any(query_lower.startswith(t) for t in deep_search_triggers)
@@ -6876,7 +7280,7 @@ def pdf_tutor_with_explicit_routing(
         news_query = cleaned_query
         for prefix in news_rag_triggers:
             if query_lower.startswith(prefix):
-                news_query = cleaned_query[len(prefix):].strip()
+                news_query = cleaned_query[len(prefix) :].strip()
                 break
 
         # If no topic extracted, use broad tech query
@@ -6929,56 +7333,50 @@ def pdf_tutor_with_explicit_routing(
             )
             save_message_to_history(query, error_response)
             return error_response, 0.0, [], False
-        
+
         allowed, firewall_error = WEB_FIREWALL.check_permission()
         if not allowed:
             save_message_to_history(query, firewall_error)
             return firewall_error, 0.0, [], False
 
-        
         # Strip trigger prefix
         search_query = cleaned_query
         for prefix in web_search_triggers:
             if query_lower.startswith(prefix):
-                search_query = cleaned_query[len(prefix):].strip()
+                search_query = cleaned_query[len(prefix) :].strip()
                 break
-        
+
         search_type = "Deep web search" if is_deep_search else "Web search"
         add_thought(f"{search_type} initiated for: '{search_query[:50]}'", "🌐")
-        
+
         debug_log(
             f"{'🔬 DEEP' if is_deep_search else '🔎'} SEARCH triggered: '{search_query}'"
         )
-        
+
         try:
             if is_deep_search:
                 context, results = run_deep_web_search(
-                    search_query,
-                    max_results=5,
-                    read_full_pages=True
+                    search_query, max_results=5, read_full_pages=True
                 )
                 confidence = 0.85
                 label = "Deep Search"
                 max_tokens = 800
             else:
-                context, results = run_web_search_protected(
-                    search_query,
-                    debug=True
-                )
+                context, results = run_web_search_protected(search_query, debug=True)
                 confidence = 0.75
                 label = "Web Search"
                 max_tokens = 500
-            
+
             if not context or not results:
                 add_thought("No web results found", "⚠️")
                 msg = f"No results found for '{search_query}'."
                 save_message_to_history(query, msg)
                 return msg, 0.0, [], True
-            
+
             add_thought(f"Retrieved {len(results)} web results", "✅")
             time.sleep(2.0)
             add_thought("Processing web results...")
-            
+
             # Cache results in RAG
             if RAG_ADAPTER and results:
                 normalized = []
@@ -6987,34 +7385,32 @@ def pdf_tutor_with_explicit_routing(
                         normalized.append(r)
                     elif len(r) == 2:
                         normalized.append((r[0], r[1], ""))
-                
+
                 if normalized:
                     RAG_ADAPTER.add_web_search_results(
-                        search_query,
-                        normalized,
-                        confidence=confidence
+                        search_query, normalized, confidence=confidence
                     )
-            
+
             # Build prompt with web context
             prompt = build_prompt(
                 persona + f"\n\nUse {label.lower()} results to answer accurately.",
                 search_query,
                 context,
-                #use_gemini=use_gemini
+                # use_gemini=use_gemini
             )
-            
+
             llm_out = llm(
                 prompt,
                 max_tokens=max_tokens,
                 temperature=0.3,
                 top_p=0.85,
                 repeat_penalty=1.15,
-                stop=["User:", "Question:"]
+                stop=["User:", "Question:"],
             )
-            
+
             answer = process_llm_answer(llm_out, is_code=False)
             answer = humanize_response_sentient(answer, search_query, chat_history)
-            
+
             # Add sources
             """
             sources_text = f"\n\n🌐 **Web Sources ({len(results)} results):**\n"
@@ -7023,77 +7419,96 @@ def pdf_tutor_with_explicit_routing(
                     title, url = result[0], result[1]
                     sources_text += f"• [{title}]({url})\n"
             """
-            final_response = answer 
+            final_response = answer
             add_thought("Generated answer from web sources", "✨")
             time.sleep(2.0)
 
             save_message_to_history(query, final_response)
-            
-            display_results = [(r[0], r[1]) for r in results[:8 if is_deep_search else 5]]
-            
+
+            display_results = [
+                (r[0], r[1]) for r in results[: 8 if is_deep_search else 5]
+            ]
+
             return final_response, confidence, display_results, True
-            
+
         except Exception as e:
             debug_log(f"❌ Web search error: {e}")
             import traceback
+
             traceback.print_exc()
             msg = f"Web search encountered an error: {str(e)}"
             save_message_to_history(query, msg)
             return msg, 0.0, [], True
 
-    
     # ============================================================
     # STEP 6: PERMISSION MANAGER CHECK (Priority 4)
     # ============================================================
-    #add_thought("Processing user's permission response", "🔐")
+    # add_thought("Processing user's permission response", "🔐")
     if WEB_PERMISSION_MANAGER.has_pending_request():
         # User granted permission
-        if any(phrase in query_lower for phrase in [
-            'yes', 'yeah', 'yep', 'sure', 'ok', 'okay',
-            'permission granted', 'go ahead', 'proceed',
-            'allow', 'approved', 'granted'
-        ]):
+        if any(
+            phrase in query_lower
+            for phrase in [
+                "yes",
+                "yeah",
+                "yep",
+                "sure",
+                "ok",
+                "okay",
+                "permission granted",
+                "go ahead",
+                "proceed",
+                "allow",
+                "approved",
+                "granted",
+            ]
+        ):
             permission_data = WEB_PERMISSION_MANAGER.grant_permission()
             original_query = permission_data["query"]
-            
+
             debug_log(f"✅ Permission granted for: {original_query}")
-            
+
             try:
                 searching_msg = "🔍 **Searched the web for current information...**\n\n"
-                
+
                 context, results = run_web_search_protected(original_query, debug=True)
-                
+
                 if not context or not results:
-                    add_thought("Web search returned no results - using general knowledge", "⚠️")
+                    add_thought(
+                        "Web search returned no results - using general knowledge", "⚠️"
+                    )
                     fallback_answer = (
-                        searching_msg + 
-                        "I couldn't find current information. Using my general knowledge instead."
+                        searching_msg
+                        + "I couldn't find current information. Using my general knowledge instead."
                     )
                     save_message_to_history(original_query, fallback_answer)
                     return fallback_answer, 0.5, [], False
-                
+
                 add_thought(f"Retrieved {len(results)} web sources", "✅")
-                
+
                 # Build prompt with search results
                 prompt = build_prompt(
-                    persona + "\n\nYou have current web search results. Synthesize them to answer accurately.",
+                    persona
+                    + "\n\nYou have current web search results. Synthesize them to answer accurately.",
                     original_query,
                     context,
-                    use_gemini=use_gemini
+                    use_gemini=use_gemini,
                 )
-                
+
                 llm_out = llm(
                     prompt,
                     max_tokens=max_tokens,
                     temperature=0.3,
                     top_p=0.85,
                     repeat_penalty=1.15,
-                    stop=["User:", "Question:"]
+                    stop=["User:", "Question:"],
                 )
-                
+
                 answer = process_llm_answer(llm_out, is_code=False)
-                answer = humanize_response_sentient(answer, original_query, chat_history)
-                
+                answer = humanize_response_sentient(
+                    answer, original_query, chat_history
+                )
+
                 # Add sources
                 """
                 sources_text = "\n\n🌐 **Web Sources:**\n"
@@ -7102,115 +7517,136 @@ def pdf_tutor_with_explicit_routing(
                         title, url = result[0], result[1]
                         sources_text += f"• [{title}]({url})\n"
                 """
-                full_response = searching_msg + answer 
+                full_response = searching_msg + answer
                 save_message_to_history(original_query, full_response)
-                
+
                 display_results = [(title, url) for title, url, *_ in results[:5]]
-                
 
                 add_thought("Generated web-enhanced response", "✨")
-                #time.sleep(0.1)  # Small delay to ensure thought is queued
+                # time.sleep(0.1)  # Small delay to ensure thought is queued
                 return full_response, 0.8, display_results, True
-                
+
             except Exception as e:
                 debug_log(f"❌ Web search error: {e}")
                 error_msg = f"Search error: {str(e)}"
                 save_message_to_history(original_query, error_msg)
                 return error_msg, 0.0, [], False
 
-        
         # User denied permission
-        elif any(phrase in query_lower for phrase in [
-            'no', 'nope', 'nah', 'deny', 'denied',
-            'permission denied', 'skip', 'cancel', "don't"
-        ]):
+        elif any(
+            phrase in query_lower
+            for phrase in [
+                "no",
+                "nope",
+                "nah",
+                "deny",
+                "denied",
+                "permission denied",
+                "skip",
+                "cancel",
+                "don't",
+            ]
+        ):
             permission_data = WEB_PERMISSION_MANAGER.deny_permission()
             original_query = permission_data["query"]
-            
+
             debug_log(f"⛔ Permission denied for: {original_query}")
-            
+
             # Answer using LLM knowledge only
             response_msg = "👍 **Understood.** Using my general knowledge instead.\n\n"
-            
+
             memory_context = build_memory_context_with_name(original_query)
-            prompt = build_prompt(persona, original_query, memory_context, use_gemini=use_gemini)
-            
+            prompt = build_prompt(
+                persona, original_query, memory_context, use_gemini=use_gemini
+            )
+
             llm_out = llm(
                 prompt,
                 max_tokens=max_tokens,
                 temperature=0.3,
                 top_p=0.85,
                 repeat_penalty=1.15,
-                stop=["User:", "Question:"]
+                stop=["User:", "Question:"],
             )
-            
+
             answer = process_llm_answer(llm_out, is_code=False)
             answer = humanize_response_sentient(answer, original_query, chat_history)
-            
-            full_response = response_msg + answer + "\n\n⚠️ *Note: This information may not be current.*"
-            
+
+            full_response = (
+                response_msg
+                + answer
+                + "\n\n⚠️ *Note: This information may not be current.*"
+            )
+
             save_message_to_history(original_query, full_response)
-            
+
             add_thought("Generated response using general knowledge only", "🤖")
-            #time.sleep(0.1)  # Small delay to ensure thought is queued
+            # time.sleep(0.1)  # Small delay to ensure thought is queued
             return full_response, 0.5, [], False
         # User said something else - clear pending and continue
         else:
             debug_log("ℹ️ User response unclear - clearing pending permission")
             WEB_PERMISSION_MANAGER.clear_pending()
-    
+
     # ============================================================
     # STEP 7: UPDATE STATS (Priority 5)
     # ============================================================
     try:
-        current_count = user_manager.get_user_data("interaction_stats.total_questions", 0)
+        current_count = user_manager.get_user_data(
+            "interaction_stats.total_questions", 0
+        )
         user_manager.update_user_stat("total_questions", current_count + 1)
         user_manager.update_user_stat("last_active", datetime.now().isoformat())
     except Exception as e:
         debug_log(f"⚠️ Stats update failed: {e}")
-    
+
     # ============================================================
     # STEP 8: SPECIAL CASE - Filename Query (Priority 6)
     # ============================================================
     detected_filename = detect_filename_query(query)
-    
+
     if detected_filename and RAG_ADAPTER:
         add_thought(f"Searching for specific file: {detected_filename}", "📄")
         debug_log(f"🎯 Detected filename query: {detected_filename}")
-        
+
         context, confidence, file_sources = retrieve_by_filename(detected_filename)
-        
+
         if context:
             add_thought(f"Found and retrieved content from {detected_filename}", "✅")
             debug_log(f"✅ Retrieved content from {detected_filename}")
-            
+
             memory_context = build_memory_context_with_name(query)
-            full_context = f"{memory_context}\n\n{context}" if memory_context else context
-            
+            full_context = (
+                f"{memory_context}\n\n{context}" if memory_context else context
+            )
+
             prompt = build_prompt(
-                persona + f"\n\nYou have the complete content of {detected_filename}. Summarize what it covers.",
+                persona
+                + f"\n\nYou have the complete content of {detected_filename}. Summarize what it covers.",
                 query,
                 full_context,
-                use_gemini=use_gemini
+                use_gemini=use_gemini,
             )
-            
+
             llm_out = llm(
-                prompt, 
-                max_tokens=500, 
+                prompt,
+                max_tokens=500,
                 temperature=0.4,
-                top_p=0.9, 
-                stop=["User:", "Question:"]
+                top_p=0.9,
+                stop=["User:", "Question:"],
             )
-            
+
             answer = process_llm_answer(llm_out, is_code=False)
             answer = humanize_response_sentient(answer, query, chat_history)
-            
+
             sources_text = f"\n\n📄 **Source:** {detected_filename}\n"
-            sources_text += f"   Retrieved {len(file_sources)} sections from this document"
-            
+            sources_text += (
+                f"   Retrieved {len(file_sources)} sections from this document"
+            )
+
             final_answer = answer + sources_text
             save_message_to_history(query, final_answer)
-            
+
             save_message_to_history(query, final_answer)
             add_thought("Generated file-specific response", "✨")
             time.sleep(0.2)
@@ -7218,23 +7654,27 @@ def pdf_tutor_with_explicit_routing(
         else:
             # File not found
             available_pdfs = get_pdf_list()
-            
+
             if available_pdfs:
-                error_response = f"I couldn't find '{detected_filename}' in the database.\n\n"
+                error_response = (
+                    f"I couldn't find '{detected_filename}' in the database.\n\n"
+                )
                 error_response += f"📚 **Available PDFs:**\n"
                 for pdf in available_pdfs[:5]:
                     error_response += f"  • {pdf['filename']}\n"
-                
+
                 if len(available_pdfs) > 5:
                     error_response += f"  ... and {len(available_pdfs) - 5} more\n"
             else:
                 error_response = f"I couldn't find '{detected_filename}' and there are no PDFs loaded.\n\n"
-                error_response += "Upload PDFs using the sidebar to enable document search."
-            
+                error_response += (
+                    "Upload PDFs using the sidebar to enable document search."
+                )
+
             save_message_to_history(query, error_response)
 
             add_thought(f"File '{detected_filename}' not found in database", "❌")
-            #time.sleep(0.1)
+            # time.sleep(0.1)
             return error_response, 0.0, [], False
     # ============================================================
     # STEP 9: SPECIAL CASE - LLM Only Mode (Priority 7)
@@ -7245,9 +7685,7 @@ def pdf_tutor_with_explicit_routing(
 
         # build_prompt() handles follow-ups automatically!
         answer, confidence = _handle_llm_only(
-            cleaned_query,
-            llm,
-            use_gemini=use_gemini_for_query
+            cleaned_query, llm, use_gemini=use_gemini_for_query
         )
 
         if use_gemini_for_query:
@@ -7262,7 +7700,7 @@ def pdf_tutor_with_explicit_routing(
             if not user_manager.current_user:
                 debug_log("⚠️ LLM ONLY: No user set! Creating default...")
                 user_manager.set_current_user("default_user")
-            
+
             save_success = save_message_to_history(query, answer)
             if save_success:
                 debug_log(f"💾 LLM ONLY: Saved successfully")
@@ -7271,44 +7709,44 @@ def pdf_tutor_with_explicit_routing(
         except Exception as e:
             debug_log(f"❌ LLM ONLY: Save exception: {e}")
             import traceback
+
             debug_log(traceback.format_exc())
-        
+
         return answer, confidence, [], False
     # ============================================================
     # STEP 10: AUTO MODE ROUTING (Priority 8)
     # ============================================================
     if search_mode == "auto":
         router = AutoModeRouter(RAG_ADAPTER, llm, emb_model)
-        
+
         debug_log(f"📚 Router analyzing with {len(chat_history)} messages")
 
         add_thought("Analyzing best source for this query", "🎯")
         decision = router.decide_source(cleaned_query, allow_web)
-        
+
         # Check if permission is needed
         if decision.reason.startswith("REQUEST_PERMISSION:"):
             permission_reason = decision.reason.replace("REQUEST_PERMISSION:", "")
-            
+
             debug_log(f"🔐 Requesting web search permission: {permission_reason}")
-            
+
             permission_request = WEB_PERMISSION_MANAGER.request_permission(
-                cleaned_query,
-                permission_reason
+                cleaned_query, permission_reason
             )
-            
+
             save_message_to_history(cleaned_query, permission_request["message"])
-            
+
             return permission_request["message"], 0.0, [], False
-        
+
         add_thought(f"Selected source: {decision.primary_source.value}", "🎯")
         add_thought(f"Reasoning: {decision.reason}", "💡")
-        
+
         debug_log(f"🎯 DECISION: {decision.primary_source.value}")
         debug_log(f"   Reason: {decision.reason}")
         debug_log(f"   Confidence: {decision.confidence:.2f}")
     else:
         decision = None
-    
+
     # ============================================================
     # STEP 11: EXECUTE BASED ON DECISION (Priority 9)
     # ============================================================
@@ -7316,22 +7754,26 @@ def pdf_tutor_with_explicit_routing(
     confidence = decision.confidence if decision else 0.6
     search_used = False
     result_sources = []
-    
+
     try:
         # Route to appropriate handler
         # Each handler calls build_prompt() which handles follow-ups automatically!
-        
-        if search_mode == "pdf_only" or (decision and decision.primary_source == KnowledgeSource.PDF_RAG):
+
+        if search_mode == "pdf_only" or (
+            decision and decision.primary_source == KnowledgeSource.PDF_RAG
+        ):
             add_thought("Searching through uploaded PDF documents", "📚")
             debug_log("📚 Using PDF RAG")
             answer, confidence, result_sources = _handle_pdf_rag(cleaned_query, llm)
             if result_sources:
                 add_thought(f"Found {len(result_sources)} relevant PDF sections", "✅")
-            
-        elif search_mode == "web_only" or (decision and decision.primary_source == KnowledgeSource.WEB_SEARCH):
+
+        elif search_mode == "web_only" or (
+            decision and decision.primary_source == KnowledgeSource.WEB_SEARCH
+        ):
             add_thought("Initiating web search", "🌐")
             debug_log("🌐 Using web search")
-            
+
             if not allow_web:
                 error_response = (
                     "🚫 Web search is disabled.\n\n"
@@ -7339,24 +7781,30 @@ def pdf_tutor_with_explicit_routing(
                 )
                 save_message_to_history(query, error_response)
                 add_thought("Web search disabled - cannot proceed", "🚫")
-                return error_response, 0.0, [], False          
+                return error_response, 0.0, [], False
             allowed, firewall_error = WEB_FIREWALL.check_permission()
             if not allowed:
                 save_message_to_history(query, firewall_error)
                 add_thought("Web search blocked by firewall", "🚫")
-                return firewall_error, 0.0, [], False          
-            answer, confidence, result_sources, search_used = _handle_web_search(cleaned_query, llm)
-        
-        elif search_mode == "pdf_web_llm" or (decision and decision.primary_source == KnowledgeSource.HYBRID):
+                return firewall_error, 0.0, [], False
+            answer, confidence, result_sources, search_used = _handle_web_search(
+                cleaned_query, llm
+            )
+
+        elif search_mode == "pdf_web_llm" or (
+            decision and decision.primary_source == KnowledgeSource.HYBRID
+        ):
             add_thought("Using hybrid mode (combining multiple sources)", "🔀")
             debug_log("🔀 Using HYBRID mode (PDF + LLM)")
             answer, confidence, result_sources = _handle_hybrid(cleaned_query, llm)
-            
+
             if answer is None:
                 debug_log("⚠️ Hybrid mode returned None, falling back to LLM only")
-                answer, confidence = _handle_llm_only(cleaned_query, llm, use_gemini=use_gemini_for_query)
+                answer, confidence = _handle_llm_only(
+                    cleaned_query, llm, use_gemini=use_gemini_for_query
+                )
                 result_sources = []
-        
+
         else:
             # Always try DB before falling back to pure LLM
             add_thought("Checking knowledge base...", "🔍")
@@ -7366,32 +7814,51 @@ def pdf_tutor_with_explicit_routing(
             if not answer or len(answer.strip()) < 10:
                 add_thought("No DB results — using LLM knowledge", "🤖")
                 debug_log("🤖 Falling back to pure LLM (DB had nothing)")
-                answer, confidence = _handle_llm_only(cleaned_query, llm, use_gemini=use_gemini_for_query)
+                answer, confidence = _handle_llm_only(
+                    cleaned_query, llm, use_gemini=use_gemini_for_query
+                )
                 result_sources = []
-        
+
         # Check if primary source failed and we have a fallback
-        if decision and decision.fallback_source and (not answer or len(answer.strip()) < 10):
-            add_thought(f"Primary source insufficient - trying fallback: {decision.fallback_source.value}", "⚠️")
-            debug_log(f"⚠️ Primary source failed, trying fallback: {decision.fallback_source.value}")
-            
+        if (
+            decision
+            and decision.fallback_source
+            and (not answer or len(answer.strip()) < 10)
+        ):
+            add_thought(
+                f"Primary source insufficient - trying fallback: {decision.fallback_source.value}",
+                "⚠️",
+            )
+            debug_log(
+                f"⚠️ Primary source failed, trying fallback: {decision.fallback_source.value}"
+            )
+
             if decision.fallback_source == KnowledgeSource.LLM_KNOWLEDGE:
-                answer, confidence = _handle_llm_only(cleaned_query, llm, use_gemini=use_gemini_for_query)
+                answer, confidence = _handle_llm_only(
+                    cleaned_query, llm, use_gemini=use_gemini_for_query
+                )
                 if answer:
-                    answer = "⚠️ *Using general knowledge (primary source unavailable)*\n\n" + answer
-            
+                    answer = (
+                        "⚠️ *Using general knowledge (primary source unavailable)*\n\n"
+                        + answer
+                    )
+
             elif decision.fallback_source == KnowledgeSource.WEB_SEARCH and allow_web:
                 allowed, _ = WEB_FIREWALL.check_permission()
                 if allowed:
-                    answer, confidence, result_sources, search_used = _handle_web_search(cleaned_query, llm)
+                    answer, confidence, result_sources, search_used = (
+                        _handle_web_search(cleaned_query, llm)
+                    )
                     if answer:
                         answer = "⚠️ *Searched web as fallback*\n\n" + answer
-        
+
     except Exception as e:
         debug_log(f"❌ Execution error: {e}")
         import traceback
+
         traceback.print_exc()
         answer = None
-    
+
     # ============================================================
     # STEP 12: FINAL FALLBACK (Priority 10)
     # ============================================================
@@ -7433,10 +7900,10 @@ def pdf_tutor_with_explicit_routing(
                 answer,
                 source_texts,
                 guard_metadata,
-                query_source=decision.primary_source.value if decision else "llm"
+                query_source=decision.primary_source.value if decision else "llm",
             )
         # else: no source text available — skip guard, don't strip a valid answer
-    
+
     # ============================================================
     # STEP 13: ADD SOURCE TRANSPARENCY (Priority 11)
     # ============================================================
@@ -7444,13 +7911,13 @@ def pdf_tutor_with_explicit_routing(
         source_note = _get_source_transparency_note(decision)
         if source_note and not answer.startswith("⚠️"):
             answer = source_note + "\n\n" + answer
-    
+
     # ============================================================
     # STEP 14: HUMANIZATION (Priority 12)
     # ============================================================
     add_thought("Enhancing response for natural conversation", "✨")
     answer = humanize_response_sentient(answer, query, chat_history)
-    
+
     # ============================================================
     # STEP 15: SAVE TO DATABASE (Priority 13)
     # ============================================================
@@ -7458,39 +7925,42 @@ def pdf_tutor_with_explicit_routing(
         if not user_manager.current_user:
             debug_log("⚠️ AUTO: No user set! Creating default...")
             user_manager.set_current_user("default_user")
-        
+
         save_success = save_message_to_history(query, answer)
         if save_success:
             debug_log(f"💾 AUTO: Saved successfully")
         else:
             debug_log(f"⚠️ AUTO: Save returned False")
-        
+
         # Reload from chat_history.json for immediate use
-        chat_history, _ = load_chat_history()  
-        
+        chat_history, _ = load_chat_history()
+
         # Sync to persistent_data for backward compatibility
         persistent_data["chat_history"] = chat_history
-        debug_log(f"💾 Synced: {len(chat_history)} total messages from chat_history.json")
-        
+        debug_log(
+            f"💾 Synced: {len(chat_history)} total messages from chat_history.json"
+        )
+
     except Exception as e:
         debug_log(f"❌ Save failed: {e}")
         # Emergency fallback
-        if 'chat_history' not in persistent_data:
-            persistent_data['chat_history'] = []
+        if "chat_history" not in persistent_data:
+            persistent_data["chat_history"] = []
         persistent_data["chat_history"].append({"user": query, "ai": answer})
-    
+
     # Save to RAG database if available
     if RAG_ADAPTER:
         try:
             RAG_ADAPTER.add_chat_exchange(
                 query,
                 answer,
-                sources=[s[0] if isinstance(s, tuple) else str(s) for s in result_sources[:5]],
-                confidence=min(confidence, 0.90)
+                sources=[
+                    s[0] if isinstance(s, tuple) else str(s) for s in result_sources[:5]
+                ],
+                confidence=min(confidence, 0.90),
             )
         except Exception as e:
             debug_log(f"⚠️ Failed to save to RAG: {e}")
-    
 
     # Add personality to response
     # ===== PERSONALITY V2 ENHANCEMENT =====
@@ -7500,50 +7970,52 @@ def pdf_tutor_with_explicit_routing(
             # Apply personality composition to final answer
             user_id = "default"  # Single-user mode
             answer = process(user_id, cleaned_query, answer)
-            
+
             # STEP 2: Handle compliments (already handled earlier, this is fallback)
             if personality_result.get("is_compliment"):
                 return personality_result["compliment_response"], 1.0, [], False
-            
+
             # STEP 3: Build enhanced response
             response_parts = []
-            
+
             # Add memory reference if available
             if personality_result.get("memory_reference"):
                 response_parts.append(personality_result["memory_reference"] + " ")
-            
+
             # Add conversation opener if available
             if personality_result.get("opener"):
                 response_parts.append(personality_result["opener"])
-            
+
             # Add main response (enhanced with personality)
-            #enhanced_answer = enhance_response(answer, cleaned_query)
+            # enhanced_answer = enhance_response(answer, cleaned_query)
             response_parts.append(enhanced_answer)
-            
+
             # STEP 4: Add suggestions/questions if available
             if personality_result.get("suggestion"):
                 response_parts.append(f"\n\n💡 {personality_result['suggestion']}")
-            
+
             if personality_result.get("curious_question"):
                 response_parts.append(f"\n\n{personality_result['curious_question']}")
-            
+
             # STEP 5: Combine all parts
             answer = "".join(response_parts)
-            
+
             # Update mood
             # Mood tracked automatically via emotional valence
             pass
         else:
             debug_log("⚠️ Personality V2 not available, skipping enhancement")
-            
+
     except Exception as e:
         debug_log(f"⚠️ Personality enhancement failed: {e}")
         import traceback
+
         debug_log(traceback.format_exc())
 
     add_thought("Response complete and ready", "🎉")
     time.sleep(2.0)
     return answer, confidence, result_sources, search_used
+
 
 # ============================================================
 # Maintain compatibility aliases
@@ -7560,45 +8032,53 @@ pdf_tutor = pdf_tutor_enhanced
 # Helper Functions
 # ============================================================
 
+
 def _get_source_transparency_note(decision: SourceDecision) -> str:
     """Generate a user-friendly note about which source we used"""
-    
+
     notes = {
         KnowledgeSource.WEB_SEARCH: "🌐 *Searched the web for current information*",
         KnowledgeSource.PDF_RAG: f"📄 *Found in your documents (confidence: {decision.confidence:.0%})*",
         KnowledgeSource.LLM_KNOWLEDGE: "💭 *Using general knowledge* (no specific sources)",
     }
-    
+
     return notes.get(decision.primary_source, "")
+
 
 # Tracks the last response source so follow-ups can inherit context
 _last_response_source = {
-    "source": None,       # "web", "pdf", "llm", "hybrid"
-    "query": None,        # original query that produced the result
-    "context": None,      # the context/results that were used
+    "source": None,  # "web", "pdf", "llm", "hybrid"
+    "query": None,  # original query that produced the result
+    "context": None,  # the context/results that were used
 }
 
-def _handle_web_search(query: str, llm, use_gemini: bool = False) -> Tuple[str, float, list, bool]:
+
+def _handle_web_search(
+    query: str, llm, use_gemini: bool = False
+) -> Tuple[str, float, list, bool]:
     """Handle web search with caching and proper error handling"""
     try:
         debug_log(f"🌐 Performing web search: '{query}'")
-        
+
         # Reuse cached web context for follow-ups instead of re-searching
-        if _last_response_source["source"] == "web" and _last_response_source["context"]:
+        if (
+            _last_response_source["source"] == "web"
+            and _last_response_source["context"]
+        ):
             debug_log("🔁 Using cached web context for follow-up (no new search)")
             context = _last_response_source["context"]
             results = []  # no new results to display
         else:
             context, results = run_web_search_protected(query, debug=True)
-        
+
         # Check if firewall blocked it
         if isinstance(context, str) and context.startswith("🚫"):
             return context, 0.0, [], False
-        
+
         if not context or not results:
             debug_log("❌ No web search results")
             return None, 0.0, [], False
-        
+
         # Store results in RAG database for future caching
         if RAG_ADAPTER and results:
             try:
@@ -7609,37 +8089,35 @@ def _handle_web_search(query: str, llm, use_gemini: bool = False) -> Tuple[str, 
                     elif len(result) == 2:
                         title, url = result
                         normalized_results.append((title, url, ""))
-                
+
                 if normalized_results:
                     added_count = RAG_ADAPTER.add_web_search_results(
-                        query,
-                        normalized_results,
-                        confidence=0.75
+                        query, normalized_results, confidence=0.75
                     )
                     debug_log(f"💾 Cached {added_count} search results")
             except Exception as store_error:
                 debug_log(f"⚠️ Failed to cache results: {store_error}")
-        
+
         # Build prompt with search results
         prompt = build_prompt(
-            persona + "\n\nSynthesize information from web search results to answer accurately.",
+            persona
+            + "\n\nSynthesize information from web search results to answer accurately.",
             query,
             context,
-            use_gemini=use_gemini
-
+            use_gemini=use_gemini,
         )
-        
+
         llm_out = query_llm_smart(
             prompt,
             max_tokens=500,
             temperature=0.5,
             top_p=0.9,
             stop=["User:", "Question:"],
-            use_gemini=use_gemini
+            use_gemini=use_gemini,
         )
-        
+
         answer = process_llm_answer(llm_out, is_code=False)
-        
+
         # Add sources
         """
         sources_text = "\n\n🌐 **Web Sources:**\n"
@@ -7658,20 +8136,23 @@ def _handle_web_search(query: str, llm, use_gemini: bool = False) -> Tuple[str, 
         _last_response_source["context"] = context
 
         return full_response, 0.75, display_results, True
-        
+
     except Exception as e:
         debug_log(f"Web search error: {e}")
         import traceback
+
         traceback.print_exc()
         return None, 0.0, [], False
 
 
-def _handle_pdf_rag(query: str, llm, use_gemini: bool = False) -> Tuple[str, float, List]:
+def _handle_pdf_rag(
+    query: str, llm, use_gemini: bool = False
+) -> Tuple[str, float, List]:
     """
     Handle query using PDF RAG (Retrieval-Augmented Generation).
-    
+
     REWRITTEN VERSION - Simplified to let build_prompt() handle follow-ups.
-    
+
     This function now focuses solely on:
     1. Retrieving relevant PDF content
     2. Calling build_prompt() which automatically handles:
@@ -7679,14 +8160,14 @@ def _handle_pdf_rag(query: str, llm, use_gemini: bool = False) -> Tuple[str, flo
        - Conversation context building
        - Combining PDF context with conversation context when needed
     3. Generating and processing the response
-    
+
     Args:
         query: User's question
         llm: Language model instance
-    
+
     Returns:
         Tuple of (answer, confidence, result_sources)
-    
+
     How follow-ups work with PDFs:
         Scenario 1: Follow-up about PDF content
             User: "What does page 5 say about climate change?"
@@ -7696,7 +8177,7 @@ def _handle_pdf_rag(query: str, llm, use_gemini: bool = False) -> Tuple[str, flo
             → Retrieves previous PDF answer from chat history
             → NEW PDF search for "implications of climate change"
             → Combines both contexts intelligently
-        
+
         Scenario 2: Follow-up about code in PDF
             User: "Show me the algorithm from the paper"
             AI: [provides algorithm/code from PDF]
@@ -7706,35 +8187,35 @@ def _handle_pdf_rag(query: str, llm, use_gemini: bool = False) -> Tuple[str, flo
             → Also searches PDF for related context
             → LLM can reference both
     """
-    
+
     try:
         debug_log("📚 PDF RAG mode activated")
-        
+
         # ============================================================
         # STEP 1: Check if RAG is available
         # ============================================================
         if not RAG_ADAPTER:
             debug_log("   ⚠️ RAG not available, falling back to LLM only")
-            answer, confidence = _handle_llm_only(query, llm, use_gemini=use_gemini_for_query)
+            answer, confidence = _handle_llm_only(
+                query, llm, use_gemini=use_gemini_for_query
+            )
             return answer, confidence, []
-        
+
         # ============================================================
         # STEP 2: Retrieve relevant PDF content
         # ============================================================
         try:
             # Get relevant chunks from PDFs
             pdf_context, retrieval_results = RAG_ADAPTER.retrieve_context(
-                query, 
-                top_k=5,
-                min_score=0.3  # Minimum relevance threshold
+                query, top_k=5, min_score=0.3  # Minimum relevance threshold
             )
-            
+
             if not pdf_context or not retrieval_results:
                 debug_log("   ⚠️ No relevant PDF content found")
-                
+
                 # Check if any PDFs are loaded
                 available_pdfs = get_pdf_list()
-                
+
                 if not available_pdfs:
                     # No PDFs loaded at all
                     answer = (
@@ -7745,32 +8226,41 @@ def _handle_pdf_rag(query: str, llm, use_gemini: bool = False) -> Tuple[str, flo
                 else:
                     # PDFs exist but nothing relevant found
                     debug_log("   ℹ️ PDFs available but no relevant content, using LLM")
-                    answer, confidence = _handle_llm_only(query, llm, use_gemini=use_gemini_for_query)
-                    
+                    answer, confidence = _handle_llm_only(
+                        query, llm, use_gemini=use_gemini_for_query
+                    )
+
                     # Add note about no relevant content
                     answer = (
                         "ℹ️ *No highly relevant content found in loaded PDFs. "
                         "Using general knowledge instead.*\n\n" + answer
                     )
                     return answer, confidence, []
-            
+
             debug_log(f"   ✅ Retrieved PDF context: {len(pdf_context)} chars")
             debug_log(f"   📄 Sources: {len(retrieval_results)} chunks")
-            
+
             # Log source diversity
-            sources = set(r.chunk.source_name for r in retrieval_results if hasattr(r, 'chunk'))
+            sources = set(
+                r.chunk.source_name for r in retrieval_results if hasattr(r, "chunk")
+            )
             if sources:
-                debug_log(f"   📚 From {len(sources)} document(s): {', '.join(list(sources)[:3])}")
-            
+                debug_log(
+                    f"   📚 From {len(sources)} document(s): {', '.join(list(sources)[:3])}"
+                )
+
         except Exception as e:
             debug_log(f"   ❌ PDF retrieval failed: {e}")
             import traceback
+
             debug_log(f"   Stack trace:\n{traceback.format_exc()}")
-            
+
             # Fallback to LLM only
-            answer, confidence = _handle_llm_only(query, llm, use_gemini=use_gemini_for_query)
+            answer, confidence = _handle_llm_only(
+                query, llm, use_gemini=use_gemini_for_query
+            )
             return answer, confidence, []
-        
+
         # ============================================================
         # STEP 3: Build prompt with PDF context
         # ============================================================
@@ -7779,7 +8269,7 @@ def _handle_pdf_rag(query: str, llm, use_gemini: bool = False) -> Tuple[str, flo
         # 2. If follow-up: load previous conversation
         # 3. Combine PDF context (passed here) with conversation context
         # 4. Format everything appropriately
-        
+
         # Enhanced persona for PDF-based answers
         pdf_persona = persona + (
             "\n\n**INSTRUCTIONS**: "
@@ -7788,17 +8278,17 @@ def _handle_pdf_rag(query: str, llm, use_gemini: bool = False) -> Tuple[str, flo
             "Cite specific information from the PDFs when relevant. "
             "If the PDFs don't fully answer the question, combine PDF info with your knowledge."
         )
-        
+
         # build_prompt() handles follow-ups AND combines with PDF context
         prompt = build_prompt(
             pdf_persona,
             query,
             pdf_context,  # PDF context provided here
-            use_gemini=use_gemini
+            use_gemini=use_gemini,
         )
-        
+
         debug_log(f"   📨 Built prompt: {len(prompt)} chars")
-        
+
         # ============================================================
         # STEP 4: Generate response
         # ============================================================
@@ -7809,47 +8299,55 @@ def _handle_pdf_rag(query: str, llm, use_gemini: bool = False) -> Tuple[str, flo
             top_p=0.8,
             repeat_penalty=1.2,
             stop=["User:", "Question:", "Human:", "Assistant:"],
-            use_gemini=use_gemini
+            use_gemini=use_gemini,
         )
-        
+
         if not llm_out:
             debug_log("   ⚠️ LLM returned empty response")
-            return "I couldn't generate a response from the PDF content.", 0.3, retrieval_results
-        
+            return (
+                "I couldn't generate a response from the PDF content.",
+                0.3,
+                retrieval_results,
+            )
+
         # ============================================================
         # STEP 5: Process answer
         # ============================================================
         answer = process_llm_answer(llm_out, is_code=False)
-        
+
         if not answer or len(answer.strip()) < 10:
             debug_log("   ⚠️ Processed answer is too short")
-            return "I couldn't generate a proper answer from the PDFs.", 0.3, retrieval_results
-        
+            return (
+                "I couldn't generate a proper answer from the PDFs.",
+                0.3,
+                retrieval_results,
+            )
+
         debug_log(f"   ✅ Generated answer: {len(answer)} chars")
-        
+
         # ============================================================
         # STEP 6: Add source citations
         # ============================================================
         # Build source list from retrieval results
         source_list = []
         seen_sources = set()
-        
+
         for result in retrieval_results[:5]:  # Top 5 sources
             try:
-                if hasattr(result, 'chunk'):
+                if hasattr(result, "chunk"):
                     source_name = result.chunk.source_name
                     if source_name and source_name not in seen_sources:
                         seen_sources.add(source_name)
-                        
+
                         # Get page number if available
-                        page = getattr(result.chunk, 'page_number', None)
+                        page = getattr(result.chunk, "page_number", None)
                         if page:
                             source_list.append((source_name, f"Page {page}"))
                         else:
                             source_list.append((source_name, ""))
             except AttributeError:
                 continue
-        
+
         # Add sources to answer
         if source_list:
             sources_text = "\n\n📄 **Sources:**\n"
@@ -7858,59 +8356,64 @@ def _handle_pdf_rag(query: str, llm, use_gemini: bool = False) -> Tuple[str, flo
                     sources_text += f"• {source_name} ({page_info})\n"
                 else:
                     sources_text += f"• {source_name}\n"
-            
+
             answer = answer + sources_text
             debug_log(f"   📌 Added {len(source_list)} source citations")
-        
+
         # ============================================================
         # STEP 7: Calculate confidence
         # ============================================================
         # Higher confidence for PDF RAG since we have retrieved content
         # Base confidence on retrieval quality
         if retrieval_results:
-            avg_score = sum(r.score for r in retrieval_results if hasattr(r, 'score')) / len(retrieval_results)
+            avg_score = sum(
+                r.score for r in retrieval_results if hasattr(r, "score")
+            ) / len(retrieval_results)
             confidence = min(0.85, 0.6 + (avg_score * 0.3))  # 0.6 to 0.85 range
         else:
             confidence = 0.7
-        
+
         debug_log(f"   📊 Confidence: {confidence:.2f}")
-        
+
         return answer, confidence, retrieval_results
-        
+
     except Exception as e:
         debug_log(f"❌ Error in _handle_pdf_rag: {e}")
         import traceback
+
         debug_log(f"Stack trace:\n{traceback.format_exc()}")
-        
+
         # Fallback to LLM only
         debug_log("   🔄 Falling back to LLM only")
-        answer, confidence = _handle_llm_only(query, llm, use_gemini=use_gemini_for_query)
+        answer, confidence = _handle_llm_only(
+            query, llm, use_gemini=use_gemini_for_query
+        )
         return answer, confidence, []
 
 
 def _handle_pdf_rag_with_filters(
-    query: str, 
+    query: str,
     llm,
     filename_filter: Optional[str] = None,
     min_score: float = 0.3,
-    top_k: int = 5
+    top_k: int = 5,
 ) -> Tuple[str, float, List]:
     """
     Enhanced PDF RAG handler with filtering options.
-    
+
     Allows searching specific files or applying stricter relevance filters.
     Still uses build_prompt() for universal follow-up handling.
-    
+
     Args:
         query: User's question
         llm: Language model instance
         filename_filter: Optional filename to restrict search to
         min_score: Minimum relevance score (0.0 to 1.0)
         top_k: Number of chunks to retrieve
-    
+
     Returns:
         Tuple of (answer, confidence, result_sources)
-    
+
     Examples:
         # Search specific file
         answer, conf, sources = _handle_pdf_rag_with_filters(
@@ -7918,7 +8421,7 @@ def _handle_pdf_rag_with_filters(
             llm,
             filename_filter="research_paper.pdf"
         )
-        
+
         # Stricter relevance
         answer, conf, sources = _handle_pdf_rag_with_filters(
             "Define quantum entanglement",
@@ -7926,58 +8429,65 @@ def _handle_pdf_rag_with_filters(
             min_score=0.5  # Only highly relevant chunks
         )
     """
-    
+
     try:
         debug_log(f"📚 PDF RAG (filtered) mode activated")
         if filename_filter:
             debug_log(f"   🎯 Filtering by file: {filename_filter}")
         debug_log(f"   📊 Min score: {min_score}, Top K: {top_k}")
-        
+
         if not RAG_ADAPTER:
             debug_log("   ⚠️ RAG not available")
-            answer, confidence = _handle_llm_only(query, llm, use_gemini=use_gemini_for_query)
+            answer, confidence = _handle_llm_only(
+                query, llm, use_gemini=use_gemini_for_query
+            )
             return answer, confidence, []
-        
+
         # Retrieve with filters
         try:
             if filename_filter:
                 # Search specific file
                 pdf_context, retrieval_results = RAG_ADAPTER.retrieve_from_file(
-                    query,
-                    filename_filter,
-                    top_k=top_k,
-                    min_score=min_score
+                    query, filename_filter, top_k=top_k, min_score=min_score
                 )
             else:
                 # Search all files with score filter
                 pdf_context, retrieval_results = RAG_ADAPTER.retrieve_context(
-                    query,
-                    top_k=top_k,
-                    min_score=min_score
+                    query, top_k=top_k, min_score=min_score
                 )
-            
+
             if not pdf_context:
                 debug_log("   ⚠️ No content passed filter")
-                
+
                 # Provide helpful feedback
                 if filename_filter:
                     answer = f"I couldn't find relevant content in '{filename_filter}' for your question."
                 else:
-                    answer = "I couldn't find content that meets the relevance threshold."
-                
+                    answer = (
+                        "I couldn't find content that meets the relevance threshold."
+                    )
+
                 # Fallback to LLM
-                llm_answer, confidence = _handle_llm_only(query, llm, use_gemini=use_gemini_for_query)
-                answer = answer + "\n\nUsing general knowledge instead:\n\n" + llm_answer
-                
+                llm_answer, confidence = _handle_llm_only(
+                    query, llm, use_gemini=use_gemini_for_query
+                )
+                answer = (
+                    answer + "\n\nUsing general knowledge instead:\n\n" + llm_answer
+                )
+
                 return answer, confidence, []
-            
-            debug_log(f"   ✅ Retrieved {len(pdf_context)} chars from {len(retrieval_results)} chunks")
-            
+
+            debug_log(
+                f"   ✅ Retrieved {len(pdf_context)} chars from {len(retrieval_results)} chunks"
+            )
+
         except Exception as e:
             debug_log(f"   ❌ Filtered retrieval failed: {e}")
-            answer, confidence = _handle_llm_only(query, llm, use_gemini=use_gemini_for_query)
+            answer, confidence = _handle_llm_only(
+                query, llm, use_gemini=use_gemini_for_query
+            )
             return answer, confidence, []
-        
+
         # Build prompt (handles follow-ups automatically)
         pdf_persona = persona + (
             "\n\n**INSTRUCTIONS**: "
@@ -7985,47 +8495,47 @@ def _handle_pdf_rag_with_filters(
             "Use this content to answer accurately. "
             "The content has been filtered for relevance, so trust it."
         )
-        
+
         prompt = build_prompt(pdf_persona, query, pdf_context, use_gemini=use_gemini)
-        
+
         # Generate response
         llm_out = llm(
             prompt,
             max_tokens=500,
             temperature=0.4,
             top_p=0.9,
-            stop=["User:", "Question:"]
+            stop=["User:", "Question:"],
         )
-        
+
         if not llm_out:
             return "I couldn't generate a response.", 0.3, retrieval_results
-        
+
         answer = process_llm_answer(llm_out, is_code=False)
-        
+
         if not answer or len(answer.strip()) < 10:
             return "I couldn't generate a proper answer.", 0.3, retrieval_results
-        
+
         # Add source citations
         source_list = []
         seen_sources = set()
-        
+
         for result in retrieval_results[:5]:
             try:
-                if hasattr(result, 'chunk'):
+                if hasattr(result, "chunk"):
                     source_name = result.chunk.source_name
-                    score = getattr(result, 'score', 0.0)
-                    
+                    score = getattr(result, "score", 0.0)
+
                     if source_name and source_name not in seen_sources:
                         seen_sources.add(source_name)
-                        page = getattr(result.chunk, 'page_number', None)
-                        
+                        page = getattr(result.chunk, "page_number", None)
+
                         if page:
                             source_list.append((source_name, f"Page {page}", score))
                         else:
                             source_list.append((source_name, "", score))
             except AttributeError:
                 continue
-        
+
         if source_list:
             sources_text = "\n\n📄 **Sources (Relevance Scores):**\n"
             for source_name, page_info, score in source_list:
@@ -8033,32 +8543,38 @@ def _handle_pdf_rag_with_filters(
                     sources_text += f"• {source_name} ({page_info}) - {score:.2f}\n"
                 else:
                     sources_text += f"• {source_name} - {score:.2f}\n"
-            
+
             answer = answer + sources_text
-        
+
         # Higher confidence for filtered results
         if retrieval_results:
-            avg_score = sum(r.score for r in retrieval_results if hasattr(r, 'score')) / len(retrieval_results)
+            avg_score = sum(
+                r.score for r in retrieval_results if hasattr(r, "score")
+            ) / len(retrieval_results)
             confidence = min(0.90, 0.65 + (avg_score * 0.3))
         else:
             confidence = 0.75
-        
+
         return answer, confidence, retrieval_results
-        
+
     except Exception as e:
         debug_log(f"❌ Error in _handle_pdf_rag_with_filters: {e}")
         import traceback
+
         debug_log(f"Stack trace:\n{traceback.format_exc()}")
-        
-        answer, confidence = _handle_llm_only(query, llm, use_gemini=use_gemini_for_query)
+
+        answer, confidence = _handle_llm_only(
+            query, llm, use_gemini=use_gemini_for_query
+        )
         return answer, confidence, []
+
 
 def _handle_llm_only(query: str, llm, use_gemini: bool = False) -> Tuple[str, float]:
     """
     Handle query using pure LLM knowledge.
-    
+
     REWRITTEN VERSION - Simplified to let build_prompt() handle all context.
-    
+
     This function now focuses solely on:
     1. Building memory/preference context
     2. Calling build_prompt() which automatically handles:
@@ -8067,14 +8583,14 @@ def _handle_llm_only(query: str, llm, use_gemini: bool = False) -> Tuple[str, fl
        - Pronoun resolution
        - Code awareness
     3. Generating and processing the response
-    
+
     Args:
         query: User's question
         llm: Language model instance
-    
+
     Returns:
         Tuple of (answer, confidence)
-    
+
     How follow-ups work:
         - User: "Write a Python function to sort a list"
         - AI: [provides code]
@@ -8086,22 +8602,22 @@ def _handle_llm_only(query: str, llm, use_gemini: bool = False) -> Tuple[str, fl
             * Enhances system message for code awareness
         - Result: LLM can reference the code directly
     """
-    
+
     try:
         debug_log("🤖 LLM ONLY mode activated")
-        
+
         # ============================================================
         # STEP 1: Build memory/preference context
         # ============================================================
         # This adds user preferences, name, etc.
         # Note: We don't manually check for follow-ups here!
         # build_prompt() will detect and handle them automatically
-        
+
         memory_context = build_memory_context_with_name(query)
-        
+
         if memory_context:
             debug_log(f"   📝 Added memory context ({len(memory_context)} chars)")
-        
+
         # ============================================================
         # STEP 2: Build prompt with universal follow-up handling
         # ============================================================
@@ -8112,16 +8628,16 @@ def _handle_llm_only(query: str, llm, use_gemini: bool = False) -> Tuple[str, fl
         # - If follow-up about code: preserves code blocks and enhances system msg
         # - If new question: just adds memory context
         # - Formats everything for the current model type
-        
+
         prompt = build_prompt(
             persona,  # System message/persona
-            query,    # User's current question
+            query,  # User's current question
             memory_context,  # User preferences (optional, can be empty)
-            use_gemini=use_gemini
+            use_gemini=use_gemini,
         )
-        
+
         debug_log(f"   📨 Built prompt: {len(prompt)} chars")
-        
+
         # ============================================================
         # STEP 3: Generate response
         # ============================================================
@@ -8131,57 +8647,66 @@ def _handle_llm_only(query: str, llm, use_gemini: bool = False) -> Tuple[str, fl
             temperature=0.5,
             top_p=0.9,
             stop=["User:", "Question:", "Human:", "Assistant:"],
-            use_gemini=use_gemini
+            use_gemini=use_gemini,
         )
-        
+
         if not llm_out:
             debug_log("   ⚠️ LLM returned empty response")
-            return "I apologize, but I couldn't generate a response. Please try again.", 0.3
-        
+            return (
+                "I apologize, but I couldn't generate a response. Please try again.",
+                0.3,
+            )
+
         # ============================================================
         # STEP 4: Process and clean the answer
         # ============================================================
         answer = process_llm_answer(llm_out, is_code=False)
-        
+
         if not answer or len(answer.strip()) < 5:
             debug_log("   ⚠️ Processed answer is too short")
-            return "I couldn't generate a proper answer. Could you rephrase your question?", 0.3
-        
+            return (
+                "I couldn't generate a proper answer. Could you rephrase your question?",
+                0.3,
+            )
+
         debug_log(f"   ✅ Generated answer: {len(answer)} chars")
-        
+
         # Confidence for LLM-only is moderate since we have no external validation
         confidence = 0.6
-        
+
         return answer, confidence
-        
+
     except Exception as e:
         debug_log(f"❌ Error in _handle_llm_only: {e}")
         import traceback
+
         debug_log(f"Stack trace:\n{traceback.format_exc()}")
-        
+
         # Return a safe fallback
         return (
             "I encountered an error while processing your question. "
             "Please try rephrasing it or try again.",
-            0.3
+            0.3,
         )
 
 
-def _handle_llm_with_code(query: str, llm, max_tokens: int = 800, use_gemini: bool = False) -> Tuple[str, float]:
+def _handle_llm_with_code(
+    query: str, llm, max_tokens: int = 800, use_gemini: bool = False
+) -> Tuple[str, float]:
     """
     Handle code generation queries using LLM.
-    
+
     This is a specialized version of _handle_llm_only for code generation.
     Still uses build_prompt() for universal follow-up handling.
-    
+
     Args:
         query: User's code-related question
         llm: Language model instance
         max_tokens: Maximum tokens for code generation (default 800)
-    
+
     Returns:
         Tuple of (answer, confidence)
-    
+
     Examples of follow-up handling:
         User: "Write a binary search function"
         AI: [provides code]
@@ -8190,31 +8715,28 @@ def _handle_llm_with_code(query: str, llm, max_tokens: int = 800, use_gemini: bo
         User: "What's the time complexity?"
         → build_prompt() retrieves code and adds it to context
     """
-    
+
     try:
         debug_log("💻 LLM CODE mode activated")
-        
+
         # Build memory context
         memory_context = build_memory_context_with_name(query)
-        
+
         # Enhanced persona for code generation
         code_persona = persona + (
             "\n\nYou are an expert programmer. "
             "Provide clean, well-commented code with explanations. "
             "Include docstrings and handle edge cases."
         )
-        
+
         # build_prompt() handles follow-ups automatically
         # If user asks "add error handling to it", it will retrieve previous code
         prompt = build_prompt(
-            code_persona,
-            query,
-            memory_context,
-            use_gemini=use_gemini
+            code_persona, query, memory_context, use_gemini=use_gemini
         )
-        
+
         debug_log(f"   📨 Built code prompt: {len(prompt)} chars")
-        
+
         # Generate with more tokens for code
         llm_out = query_llm_smart(
             prompt,
@@ -8222,37 +8744,41 @@ def _handle_llm_with_code(query: str, llm, max_tokens: int = 800, use_gemini: bo
             temperature=0.3,  # Lower temp for code (more deterministic)
             top_p=0.9,
             stop=["User:", "Question:", "Human:", "```\n\nUser:"],
-            use_gemini=use_gemini
+            use_gemini=use_gemini,
         )
-        
+
         if not llm_out:
             return "I couldn't generate code. Please try again.", 0.3
-        
+
         # Process answer (preserves code blocks)
         answer = process_llm_answer(llm_out, is_code=True)
-        
+
         if not answer or len(answer.strip()) < 10:
             return "I couldn't generate a proper code response. Please rephrase.", 0.3
-        
+
         debug_log(f"   ✅ Generated code response: {len(answer)} chars")
-        
+
         # Higher confidence for code since we use specialized prompt
         confidence = 0.7
-        
+
         return answer, confidence
-        
+
     except Exception as e:
         debug_log(f"❌ Error in _handle_llm_with_code: {e}")
         import traceback
+
         debug_log(f"Stack trace:\n{traceback.format_exc()}")
-        
+
         return (
             "I encountered an error while generating code. "
             "Please try again or rephrase your request.",
-            0.3
+            0.3,
         )
-       
-def _handle_hybrid(query: str, llm, use_gemini: bool = False) -> Tuple[str, float, list]:
+
+
+def _handle_hybrid(
+    query: str, llm, use_gemini: bool = False
+) -> Tuple[str, float, list]:
     """
     ✅ FIXED: Hybrid (PDF + LLM) with proper error handling and response flow
     """
@@ -8296,7 +8822,9 @@ def _handle_hybrid(query: str, llm, use_gemini: bool = False) -> Tuple[str, floa
 
             # ✅ FALLBACK: If still no results, use top results regardless of score
             if not filtered and all_results:
-                debug_log(f"⚠️ No results above {min_score}, using top {min(5, len(all_results))} by score")
+                debug_log(
+                    f"⚠️ No results above {min_score}, using top {min(5, len(all_results))} by score"
+                )
                 filtered = sorted(all_results, key=lambda x: x.score, reverse=True)[:5]
 
             if not filtered and all_results:
@@ -8311,9 +8839,7 @@ def _handle_hybrid(query: str, llm, use_gemini: bool = False) -> Tuple[str, floa
                     text = r.chunk.content
                     if len(text) > 500:
                         text = text[:500] + "..."
-                    parts.append(
-                        f"[Source {i}: {r.chunk.source_name}]\n{text}"
-                    )
+                    parts.append(f"[Source {i}: {r.chunk.source_name}]\n{text}")
 
                 pdf_context = "\n\n---\n\n".join(parts)
 
@@ -8321,7 +8847,9 @@ def _handle_hybrid(query: str, llm, use_gemini: bool = False) -> Tuple[str, floa
                     pdf_context = pdf_context[:2000] + "\n\n[Content truncated...]"
 
                 pdf_confidence = sum(r.score for r in filtered) / len(filtered)
-                rag_sources = [(r.chunk.source_name, r.chunk.chunk_id) for r in filtered]
+                rag_sources = [
+                    (r.chunk.source_name, r.chunk.chunk_id) for r in filtered
+                ]
 
                 debug_log(
                     f"   ✅ PDF context: {len(filtered)} chunks "
@@ -8362,24 +8890,25 @@ def _handle_hybrid(query: str, llm, use_gemini: bool = False) -> Tuple[str, floa
         # Step 3: Generate response
         # -------------------------------------------------
         enhanced_persona = (
-            persona
-            + "\n\nYou have access to PDF documents. "
+            persona + "\n\nYou have access to PDF documents. "
             "Use them to provide accurate answers. "
             "If the PDFs contain relevant information, cite them."
         )
 
-        prompt = build_prompt(enhanced_persona, query, full_context, use_gemini=use_gemini)
+        prompt = build_prompt(
+            enhanced_persona, query, full_context, use_gemini=use_gemini
+        )
 
         # 🔥 CRITICAL: Add debug logging before LLM call
         debug_log(f"📝 Calling LLM with prompt length: {len(prompt)} chars")
-        
+
         llm_out = query_llm_smart(
             prompt,
             max_tokens=8000,
             temperature=0.5,
             top_p=0.9,
             stop=["User:", "Question:"],
-            use_gemini=use_gemini
+            use_gemini=use_gemini,
         )
 
         # 🔥 CRITICAL: Debug the LLM output structure
@@ -8389,25 +8918,21 @@ def _handle_hybrid(query: str, llm, use_gemini: bool = False) -> Tuple[str, floa
 
         # Process answer
         answer = process_llm_answer(llm_out, is_code=False)
-        
+
         # 🔥 CRITICAL: Check if answer is empty
         if not answer or len(answer.strip()) < 5:
             debug_log(f"❌ Empty or invalid answer generated: '{answer}'")
             return None, 0.0, []
-        
-        debug_log(f"✅ Generated answer length: {len(answer)} chars")
 
+        debug_log(f"✅ Generated answer length: {len(answer)} chars")
 
         # -------------------------------------------------
         # Step 4: Add source attribution
         # -------------------------------------------------
         if rag_sources:
-            
+
             sources_used = {src for src, _ in rag_sources}
-           
-            
-            
-            
+
             final_answer = answer
         else:
             final_answer = answer
@@ -8416,20 +8941,23 @@ def _handle_hybrid(query: str, llm, use_gemini: bool = False) -> Tuple[str, floa
         # Step 5: Calculate confidence
         # -------------------------------------------------
         hybrid_confidence = (
-            (pdf_confidence * 0.6) + (0.65 * 0.4)
-            if pdf_confidence > 0 else 0.65
+            (pdf_confidence * 0.6) + (0.65 * 0.4) if pdf_confidence > 0 else 0.65
         )
 
         debug_log(f"📊 Final confidence: {hybrid_confidence:.2f}")
-        debug_log(f"✅ Returning: answer ({len(final_answer)} chars), confidence ({hybrid_confidence:.2f}), sources ({len(rag_sources)})")
+        debug_log(
+            f"✅ Returning: answer ({len(final_answer)} chars), confidence ({hybrid_confidence:.2f}), sources ({len(rag_sources)})"
+        )
 
         return final_answer, hybrid_confidence, rag_sources
 
     except Exception as e:
         debug_log(f"❌ Hybrid mode error: {e}")
         import traceback
+
         traceback.print_exc()
         return None, 0.0, []
+
 
 # ----------------------------
 # ENHANCED PDF MANAGEMENT
@@ -8439,18 +8967,22 @@ def process_pdfs(uploaded_files):
     Process PDFs using new RAG system with proper error handling
     """
     if not uploaded_files:
-        return {"error": "No files uploaded — drop some PDFs in and I'll get reading! 📖"}
-    
+        return {
+            "error": "No files uploaded — drop some PDFs in and I'll get reading! 📖"
+        }
+
     if RAG_ADAPTER is None:
-        return {"error": "RAG system not available. PDF search requires the embedding model."}
-    
+        return {
+            "error": "RAG system not available. PDF search requires the embedding model."
+        }
+
     try:
         debug_log(f"📄 Processing {len(uploaded_files)} PDF(s)...")
-        
+
         # ✅ FIX 1: Extract text from PDFs with error handling
         pdf_texts = {}
         failed_files = []
-        
+
         for filepath in uploaded_files:
             filename = os.path.basename(filepath)
             try:
@@ -8464,48 +8996,46 @@ def process_pdfs(uploaded_files):
             except Exception as e:
                 failed_files.append(filename)
                 debug_log(f"  ❌ {filename}: {e}")
-        
+
         if not pdf_texts:
             return {
                 "error": f"Could not extract text from any PDFs. Failed: {', '.join(failed_files)}"
             }
-        
+
         # ✅ FIX 2: Process using RAG system
         debug_log("🔄 Processing with RAG system...")
-        
+
         chunks, sources, embeddings, topics = RAG_ADAPTER.process_pdfs_legacy(
-            pdf_texts,
-            chunk_size=1000,
-            chunk_overlap=200
+            pdf_texts, chunk_size=1000, chunk_overlap=200
         )
-        
+
         if not chunks or not sources:
-            return {
-                "error": "PDF processing failed - no chunks created"
-            }
-        
+            return {"error": "PDF processing failed - no chunks created"}
+
         debug_log(f"✅ Created {len(chunks)} chunks from {len(set(sources))} PDFs")
-        
+
         # ✅ FIX 3: Update persistent data (for backward compatibility)
-        persistent_data.update({
-            "chunks": chunks,
-            "sources": sources,
-            "chunk_emb": embeddings,
-            "topics": topics
-        })
-        
+        persistent_data.update(
+            {
+                "chunks": chunks,
+                "sources": sources,
+                "chunk_emb": embeddings,
+                "topics": topics,
+            }
+        )
+
         # ✅ FIX 4: Save to disk (legacy format)
         try:
             save_pdf_index(chunks, sources, embeddings, topics)
             debug_log("💾 Saved to legacy storage")
         except Exception as e:
             debug_log(f"⚠️ Legacy save failed: {e}")
-        
+
         # ✅ FIX 5: Get updated stats
         stats = {}
         total_chunks = len(chunks)
         total_pdfs = len(set(sources))
-        
+
         if RAG_ADAPTER:
             try:
                 stats = RAG_ADAPTER.get_stats()
@@ -8513,16 +9043,16 @@ def process_pdfs(uploaded_files):
                 total_pdfs = stats.get("total_sources", len(set(sources)))
             except Exception as e:
                 debug_log(f"⚠️ Stats retrieval failed: {e}")
-        
+
         # ✅ FIX 6: Build success message
         msg = f"✅ Processed {len(pdf_texts)} PDF(s)! "
         msg += f"Total: {total_pdfs} PDFs with {total_chunks} chunks."
-        
+
         if failed_files:
             msg += f"\n⚠️ Failed to process: {', '.join(failed_files)}"
-        
+
         msg += f"\n💾 Stored in RAG database — ready for intelligent search! 🎉"
-        
+
         # ✅ FIX 7: Return structured response
         return {
             "message": msg,
@@ -8530,16 +9060,17 @@ def process_pdfs(uploaded_files):
             "total_documents": total_pdfs,
             "processed_files": list(pdf_texts.keys()),
             "failed_files": failed_files,
-            "stats": stats
+            "stats": stats,
         }
-        
+
     except Exception as e:
         debug_log(f"❌ PDF processing error: {e}")
         import traceback
+
         traceback.print_exc()
-        return {
-            "error": f"Error processing PDFs: {str(e)}"
-        }
+        return {"error": f"Error processing PDFs: {str(e)}"}
+
+
 def clear_pdfs():
     """Clear all PDFs from hybrid system"""
     if HYBRID_RAG is None:
@@ -8575,54 +9106,54 @@ def clear_pdfs():
         return f"❌ Error clearing PDFs: {str(e)}"
 
 
-
 def get_pdf_status():
     """Get detailed status of currently loaded PDFs with proper formatting"""
     try:
         if RAG_ADAPTER is None:
             return "RAG system not initialized. PDF search is unavailable."
-        
+
         # Get fresh stats from database
         stats = RAG_ADAPTER.get_stats()
         pdf_list = get_pdf_list()
-        
+
         # Build formatted status message
         status_msg = "📊 **PDF Status Report**\n"
         status_msg += "=" * 50 + "\n\n"
-        
+
         if not pdf_list or len(pdf_list) == 0:
             status_msg += "📭 **No PDFs loaded**\n\n"
             status_msg += "Upload PDFs using the sidebar to enable document search.\n"
             return status_msg
-        
+
         # Summary stats
         total_chunks = stats.get("total_chunks", 0)
         total_docs = len(pdf_list)
-        
+
         status_msg += f"✅ **Loaded PDFs:** {total_docs}\n"
         status_msg += f"📦 **Total Chunks:** {total_chunks}\n"
         status_msg += f"🔍 **Search Status:** Active\n\n"
-        
+
         # List each PDF with details
         status_msg += "📄 **Document List:**\n\n"
-        
+
         for i, pdf in enumerate(pdf_list, 1):
             filename = pdf.get("filename", "Unknown")
             chunk_count = pdf.get("chunk_count", 0)
             last_updated = pdf.get("last_updated", "Unknown")
-            
+
             status_msg += f"{i}. **{filename}**\n"
             status_msg += f"   • Chunks: {chunk_count}\n"
             status_msg += f"   • Updated: {last_updated}\n\n"
-        
+
         status_msg += "=" * 50 + "\n"
         status_msg += "💡 Use 'use pdf: [question]' to search these documents\n"
-        
+
         return status_msg
-        
+
     except Exception as e:
         debug_log(f"Error getting PDF status: {e}")
         import traceback
+
         traceback.print_exc()
         return f"⚠️ Error retrieving PDF status: {str(e)}"
 
@@ -8633,7 +9164,6 @@ def get_pdf_list_for_deletion():
     if not sources:
         return []
     return sorted(list(set(sources)))
-
 
 
 def load_previous_chat():
@@ -8687,7 +9217,9 @@ def export_chat_pdf():
     pdf.add_page()
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.set_font("Arial", size=12)
-    pdf.cell(0, 10, "Chat History with Project Elixer (AI Assistant)", ln=True, align="C")
+    pdf.cell(
+        0, 10, "Chat History with Project Elixer (AI Assistant)", ln=True, align="C"
+    )
     pdf.ln(5)
     for entry in persistent_data["chat_history"]:
         pdf.set_font("Arial", "B", 11)
@@ -8735,13 +9267,13 @@ os.environ["TRANSFORMERS_OFFLINE"] = "1"
 os.environ["HF_HUB_OFFLINE"] = "1"
 
 try:
-    emb_model = SentenceTransformer("all-MiniLM-L6-v2", cache_folder="./models")
+    emb_model = SentenceTransformer("all-MiniLM-L6-v2", cache_folder="./hf_cache")
     print("✅ Embedding model loaded from local cache")
 except Exception as e:
     print(f"⚠️ Could not load embedding model offline: {e}")
     print("📥 Attempting to download embedding model (this may require internet)...")
     try:
-        emb_model = SentenceTransformer("all-MiniLM-L6-v2", cache_folder="./models")
+        emb_model = SentenceTransformer("all-MiniLM-L6-v2", cache_folder="./hf_cache")
         print("✅ Embedding model downloaded and cached")
     except Exception as e2:
         print(f"❌ Failed to download embedding model: {e2}")
@@ -8768,34 +9300,34 @@ except Exception as e:
 MODEL_FORMAT = detect_model_format(model_path)
 print(f"📌 Detected model format: {MODEL_FORMAT}")
 
+
 def initialize_gemini(api_key: str = None):
     """
     Initialize Gemini LLM
-    
+
     Args:
         api_key: Google API key (optional if GEMINI_API_KEY env var is set)
-    
+
     Returns:
         bool: True if successful
     """
     global gemini_llm
-    
+
     if not GEMINI_AVAILABLE:
         debug_log("❌ Gemini integration not available")
         return False
-    
+
     try:
         gemini_llm = create_gemini_llm(
-            api_key=api_key, 
-            model="gemini-2.5-flash",
-            enable_web_search=True
+            api_key=api_key, model="gemini-2.5-flash", enable_web_search=True
         )
         debug_log("✅ Gemini LLM initialized successfully")
         return True
     except Exception as e:
         debug_log(f"❌ Failed to initialize Gemini: {e}")
         return False
-    
+
+
 # ============================================================
 # MODEL MANAGER - Dynamic Model Switching
 # ============================================================
@@ -8805,11 +9337,12 @@ from pathlib import Path
 from typing import Dict, Optional, List
 import threading
 
+
 class ModelManager:
     """
     Manages multiple LLM models with hot-swapping capability
     """
-    
+
     def __init__(self, models_dir: str = r"C:\Users\salam\Downloads"):
         self.models_dir = Path(models_dir)
         self.current_model = None
@@ -8817,32 +9350,32 @@ class ModelManager:
         self.current_format = None
         self.available_models = {}
         self._lock = threading.RLock()
-        
+
         # Scan for available models
         self._scan_models()
-    
+
     def _scan_models(self):
         """Scan directory for available .gguf models"""
         try:
             if not self.models_dir.exists():
                 debug_log(f"⚠️ Models directory not found: {self.models_dir}")
                 return
-            
+
             debug_log(f"🔍 Scanning for models in: {self.models_dir}")
-            
+
             for file in self.models_dir.glob("*.gguf"):
                 model_info = self._parse_model_name(file.name)
-                model_info['path'] = str(file)
-                model_info['size_mb'] = file.stat().st_size / (1024 * 1024)
-                
+                model_info["path"] = str(file)
+                model_info["size_mb"] = file.stat().st_size / (1024 * 1024)
+
                 self.available_models[file.stem] = model_info
                 debug_log(f"  ✅ Found: {file.name} ({model_info['size_mb']:.1f} MB)")
-            
+
             debug_log(f"📊 Total models found: {len(self.available_models)}")
-            
+
         except Exception as e:
             debug_log(f"❌ Error scanning models: {e}")
-    
+
     def _parse_model_name(self, filename: str) -> Dict:
         """
         Parse model metadata from filename
@@ -8851,55 +9384,60 @@ class ModelManager:
           - mistral-7b-instruct-v0.2.Q4_K_M.gguf
         """
         name_lower = filename.lower()
-        
+
         info = {
-            'filename': filename,
-            'display_name': filename.replace('.gguf', ''),
-            'family': 'unknown',
-            'size': 'unknown',
-            'quantization': 'unknown',
-            'format': 'unknown'
+            "filename": filename,
+            "display_name": filename.replace(".gguf", ""),
+            "family": "unknown",
+            "size": "unknown",
+            "quantization": "unknown",
+            "format": "unknown",
         }
-        
+
         # Detect model family
-        if 'llama-3' in name_lower or 'llama3' in name_lower:
-            info['family'] = 'Llama 3'
-            info['format'] = 'llama3'
-        elif 'llama-2' in name_lower or 'llama2' in name_lower:
-            info['family'] = 'Llama 2'
-            info['format'] = 'llama2'
-        elif 'codellama' in name_lower:
-            info['family'] = 'CodeLlama'
-            info['format'] = 'llama2'
-        elif 'mistral' in name_lower:
-            info['family'] = 'Mistral'
-            info['format'] = 'mistral-instruct' if 'instruct' in name_lower else 'mistral-base'
-        elif 'phi' in name_lower:
-            info['family'] = 'Phi'
-            info['format'] = 'phi'
-        
+        if "llama-3" in name_lower or "llama3" in name_lower:
+            info["family"] = "Llama 3"
+            info["format"] = "llama3"
+        elif "llama-2" in name_lower or "llama2" in name_lower:
+            info["family"] = "Llama 2"
+            info["format"] = "llama2"
+        elif "codellama" in name_lower:
+            info["family"] = "CodeLlama"
+            info["format"] = "llama2"
+        elif "mistral" in name_lower:
+            info["family"] = "Mistral"
+            info["format"] = (
+                "mistral-instruct" if "instruct" in name_lower else "mistral-base"
+            )
+        elif "phi" in name_lower:
+            info["family"] = "Phi"
+            info["format"] = "phi"
+
         # Detect size
         import re
-        size_match = re.search(r'(\d+)B', filename, re.IGNORECASE)
+
+        size_match = re.search(r"(\d+)B", filename, re.IGNORECASE)
         if size_match:
-            info['size'] = f"{size_match.group(1)}B"
-        
+            info["size"] = f"{size_match.group(1)}B"
+
         # Detect quantization
-        quant_match = re.search(r'Q\d+_[KM_]+', filename, re.IGNORECASE)
+        quant_match = re.search(r"Q\d+_[KM_]+", filename, re.IGNORECASE)
         if quant_match:
-            info['quantization'] = quant_match.group(0)
-        
+            info["quantization"] = quant_match.group(0)
+
         return info
-    
-    def load_model(self, model_key: str, n_ctx: int = 8000, n_gpu_layers: int = 0) -> bool:
+
+    def load_model(
+        self, model_key: str, n_ctx: int = 8000, n_gpu_layers: int = 0
+    ) -> bool:
         """
         Load a specific model by key
-        
+
         Args:
             model_key: Model identifier (filename stem)
             n_ctx: Context window size
             n_gpu_layers: Number of layers to offload to GPU
-        
+
         Returns:
             Success status
         """
@@ -8907,82 +9445,83 @@ class ModelManager:
             if model_key not in self.available_models:
                 debug_log(f"❌ Model not found: {model_key}")
                 return False
-            
+
             model_info = self.available_models[model_key]
-            model_path = model_info['path']
-            
+            model_path = model_info["path"]
+
             try:
                 debug_log(f"🔄 Loading model: {model_info['display_name']}")
                 debug_log(f"   Path: {model_path}")
                 debug_log(f"   Format: {model_info['format']}")
-                
+
                 # Unload current model if exists
                 if self.current_model is not None:
                     debug_log("   Unloading previous model...")
                     del self.current_model
                     self.current_model = None
-                
+
                 # Load new model
                 from llama_cpp import Llama
-                
+
                 self.current_model = Llama(
                     model_path=model_path,
                     n_ctx=n_ctx,
                     n_threads=os.cpu_count(),
                     verbose=False,
-                    n_gpu_layers=n_gpu_layers
+                    n_gpu_layers=n_gpu_layers,
                 )
-                
+
                 self.current_model_path = model_path
-                self.current_format = model_info['format']
-                
+                self.current_format = model_info["format"]
+
                 # Update global MODEL_FORMAT
                 global MODEL_FORMAT, llm
                 MODEL_FORMAT = self.current_format
                 llm = self.current_model
-                
+
                 debug_log(f"✅ Model loaded successfully!")
                 debug_log(f"   Format set to: {MODEL_FORMAT}")
-                
+
                 return True
-                
+
             except Exception as e:
                 debug_log(f"❌ Failed to load model: {e}")
                 import traceback
+
                 traceback.print_exc()
                 return False
-    
+
     def get_available_models(self) -> List[Dict]:
         """Get list of available models with metadata"""
         return [
             {
-                'key': key,
-                'display_name': info['display_name'],
-                'family': info['family'],
-                'size': info['size'],
-                'quantization': info['quantization'],
-                'size_mb': info['size_mb'],
-                'is_current': self.current_model_path == info['path']
+                "key": key,
+                "display_name": info["display_name"],
+                "family": info["family"],
+                "size": info["size"],
+                "quantization": info["quantization"],
+                "size_mb": info["size_mb"],
+                "is_current": self.current_model_path == info["path"],
             }
             for key, info in self.available_models.items()
         ]
-    
+
     def get_current_model_info(self) -> Optional[Dict]:
         """Get info about currently loaded model"""
         if not self.current_model_path:
             return None
-        
+
         for key, info in self.available_models.items():
-            if info['path'] == self.current_model_path:
+            if info["path"] == self.current_model_path:
                 return {
-                    'key': key,
-                    'display_name': info['display_name'],
-                    'family': info['family'],
-                    'size': info['size'],
-                    'quantization': info['quantization'],
-                    'format': self.current_format
+                    "key": key,
+                    "display_name": info["display_name"],
+                    "family": info["family"],
+                    "size": info["size"],
+                    "quantization": info["quantization"],
+                    "format": self.current_format,
                 }
-        
+
         return None
 
 
@@ -9003,23 +9542,21 @@ if llm and model_path:
         debug_log(f"✅ Current model registered: {default_key}")
 
 
-
-
-
-
 # 1. Initialize RAG_ENGINE with embedding model AND the cache directory
 try:
     # We use CACHE_DIR / "rag_index" to give the RAG engine its own subfolder
     rag_cache_path = CACHE_DIR / "rag_index"
     rag_cache_path.mkdir(exist_ok=True)
-    
+
     # Pass both required arguments
     RAG_ENGINE = create_rag_engine(
-        embedding_model=emb_model, 
-        cache_dir=str(rag_cache_path)  # Pass as string if the function expects a path string
+        embedding_model=emb_model,
+        cache_dir=str(
+            rag_cache_path
+        ),  # Pass as string if the function expects a path string
     )
     print(f"✅ RAG_ENGINE initialized successfully at {rag_cache_path}")
-    
+
 except Exception as e:
     print(f"⚠️ Failed to initialize RAG_ENGINE: {e}")
     RAG_ENGINE = None
@@ -9073,6 +9610,7 @@ else:
 
 
 # ================= RAG API FUNCTIONS (FIXES) =================
+
 
 def clear_rag_index():
     """
@@ -9161,11 +9699,13 @@ def simple_web_search(query: str) -> Tuple[str, List[Tuple[str, str]]]:
         print(f"❌ Simple search failed: {e}")
         return "", []
 
+
 def get_rag_stats():
     """Get RAG system statistics"""
     if RAG_ADAPTER is None:
         return {"error": "RAG system not initialized"}
     return RAG_ADAPTER.get_stats()
+
 
 def clear_rag_cache():
     """Clear RAG cache"""
@@ -9174,6 +9714,7 @@ def clear_rag_cache():
     deleted = RAG_ADAPTER.clean_expired()
     return {"success": True, "message": f"Cleared {deleted} entries"}
 
+
 def rebuild_rag_index():
     """Rebuild FAISS index"""
     if RAG_ADAPTER is None:
@@ -9181,13 +9722,14 @@ def rebuild_rag_index():
     RAG_ADAPTER.rebuild_index()
     return {"success": True, "message": "Index rebuilt"}
 
+
 def search_rag_knowledge(query: str, top_k: int = 5):
     """Direct search of RAG knowledge"""
     if RAG_ADAPTER is None:
         return {"error": "RAG not initialized"}
-    
+
     context, results = RAG_ADAPTER.get_context_for_llm(query, top_k)
-    
+
     return {
         "query": query,
         "results": [
@@ -9195,12 +9737,13 @@ def search_rag_knowledge(query: str, top_k: int = 5):
                 "content": r.chunk.content,
                 "source": r.chunk.source_name,
                 "score": r.score,
-                "method": r.retrieval_method
+                "method": r.retrieval_method,
             }
             for r in results
         ],
-        "count": len(results)
+        "count": len(results),
     }
+
 
 # ==================== DATABASE CLEANUP ====================
 import atexit
@@ -9220,26 +9763,29 @@ atexit.register(cleanup_database)
 
 # yan.py - Add these diagnostic functions
 
+
 def diagnose_cache_system():
     """
     Complete diagnostic of cache system
     """
     if not RAG_ADAPTER:
         return "❌ RAG_ADAPTER not initialized"
-    
+
     try:
         cursor = RAG_ADAPTER.rag_db.conn.cursor()
-        
+
         report = "🔍 **Cache System Diagnostic Report**\n"
         report += "=" * 60 + "\n\n"
-        
+
         # 1. Check knowledge_chunks table
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT source_type, COUNT(*) as count
             FROM knowledge_chunks
             GROUP BY source_type
-        """)
-        
+        """
+        )
+
         report += "📦 **Knowledge Chunks by Type:**\n"
         rows = cursor.fetchall()
         if rows:
@@ -9247,125 +9793,139 @@ def diagnose_cache_system():
                 report += f"  • {row['source_type']}: {row['count']} chunks\n"
         else:
             report += "  (empty)\n"
-        
+
         # 2. Check query_cache table
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT COUNT(*) as total,
                    SUM(CASE WHEN expiry_timestamp > ? THEN 1 ELSE 0 END) as valid
             FROM query_cache
-        """, (time.time(),))
-        
+        """,
+            (time.time(),),
+        )
+
         row = cursor.fetchone()
         report += f"\n🔑 **Query Cache:**\n"
         report += f"  • Total entries: {row['total']}\n"
         report += f"  • Valid (not expired): {row['valid']}\n"
-        
+
         # 3. Show recent web searches
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT source_name, timestamp
             FROM knowledge_chunks
             WHERE source_type = 'web_search'
             ORDER BY timestamp DESC
             LIMIT 5
-        """)
-        
+        """
+        )
+
         report += f"\n🌐 **Recent Web Searches (last 5):**\n"
         rows = cursor.fetchall()
         if rows:
             for i, row in enumerate(rows, 1):
-                age = time.time() - row['timestamp']
+                age = time.time() - row["timestamp"]
                 report += f"  {i}. {row['source_name'][:50]} (age: {format_age(age)})\n"
         else:
             report += "  (no web searches cached)\n"
-        
+
         # 4. Show recent cached queries
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT query, timestamp
             FROM query_cache
             WHERE expiry_timestamp > ?
             ORDER BY timestamp DESC
             LIMIT 5
-        """, (time.time(),))
-        
+        """,
+            (time.time(),),
+        )
+
         report += f"\n🔍 **Recent Cached Queries (last 5):**\n"
         rows = cursor.fetchall()
         if rows:
             for i, row in enumerate(rows, 1):
-                age = time.time() - row['timestamp']
+                age = time.time() - row["timestamp"]
                 report += f"  {i}. '{row['query'][:50]}' (age: {format_age(age)})\n"
         else:
             report += "  (no queries cached)\n"
-        
+
         # 5. Check PDF documents
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT source_type, COUNT(*) as count
             FROM knowledge_chunks
             WHERE source_type = 'pdf_document'
-        """)
-        
+        """
+        )
+
         row = cursor.fetchone()
-        pdf_count = row['count'] if row else 0
-        
+        pdf_count = row["count"] if row else 0
+
         report += f"\n📄 **PDF Documents:**\n"
         report += f"  • Total chunks: {pdf_count}\n"
-        
+
         if pdf_count > 0:
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT DISTINCT source_name
                 FROM knowledge_chunks
                 WHERE source_type = 'pdf_document'
-            """)
-            
+            """
+            )
+
             pdf_files = cursor.fetchall()
             report += f"  • Unique files: {len(pdf_files)}\n"
             report += "  • Files:\n"
             for pdf in pdf_files[:5]:
                 report += f"    - {pdf['source_name']}\n"
-        
+
         # 6. Database file size
         import os
+
         db_path = RAG_ADAPTER.rag_db.db_path
         if os.path.exists(db_path):
             size_mb = os.path.getsize(db_path) / (1024 * 1024)
             report += f"\n💾 **Database File:**\n"
             report += f"  • Path: {db_path}\n"
             report += f"  • Size: {size_mb:.2f} MB\n"
-        
+
         report += "\n" + "=" * 60 + "\n"
-        
+
         return report
-        
+
     except Exception as e:
         import traceback
+
         return f"❌ Diagnostic failed: {e}\n\n{traceback.format_exc()}"
         # 1. Run diagnostics
         print(diagnose_cache_system())
+
 
 # ================= RAG ENGINE =================
 # Initialize RAG Integration Adapter
 RAG_ADAPTER = None
 
+
 def initialize_rag_adapter():
     """Initialize the new RAG system"""
     global RAG_ADAPTER
-    
+
     if emb_model is None:
         debug_log("⚠️ Embedding model missing – RAG disabled")
         return None
-    
+
     try:
         RAG_ADAPTER = RAGIntegrationAdapter(
-            cache_dir=CACHE_DIR / "rag",
-            embedding_model=emb_model
+            cache_dir=CACHE_DIR / "rag", embedding_model=emb_model
         )
-        
+
         debug_log("✅ RAG Integration Adapter initialized")
         return RAG_ADAPTER
-        
+
     except Exception as e:
         debug_log(f"❌ RAG adapter init failed: {e}")
         return None
-
 
 
 def initialize_rag_metadata():
@@ -9374,36 +9934,37 @@ def initialize_rag_metadata():
     Safe to call multiple times
     """
     global rag_metadata
-    
+
     try:
         debug_log("🔄 Initializing RAG metadata...")
-        
+
         # Ensure rag_metadata exists
-        if 'rag_metadata' not in globals():
-            globals()['rag_metadata'] = {
+        if "rag_metadata" not in globals():
+            globals()["rag_metadata"] = {
                 "total_chunks": 0,
                 "total_documents": 0,
                 "last_updated": None,
             }
-        
+
         # Refresh from current data
         refresh_rag_metadata()
-        
+
         debug_log(f"✅ RAG metadata initialized: {rag_metadata}")
         return True
-        
+
     except Exception as e:
         debug_log(f"⚠️ RAG metadata initialization failed: {e}")
-        
+
         # Ensure minimum viable state
-        if 'rag_metadata' not in globals():
-            globals()['rag_metadata'] = {
+        if "rag_metadata" not in globals():
+            globals()["rag_metadata"] = {
                 "total_chunks": 0,
                 "total_documents": 0,
                 "last_updated": None,
             }
-        
+
         return False
+
 
 # Initialize on startup
 RAG_ADAPTER = initialize_rag_adapter()
@@ -9422,35 +9983,34 @@ if __name__ == "__main__":
     print("🔐 Permission system active - web search requires user approval")
     debug_log("🔐 Permission system active - web search requires user approval")
 
-        # Initialize RAG metadata
-    #initialize_rag_metadata()
-    
+    # Initialize RAG metadata
+    # initialize_rag_metadata()
+
     # Show status
-    pdf_sources = persistent_data.get('sources', [])
+    pdf_sources = persistent_data.get("sources", [])
     if pdf_sources:
         unique_pdfs = len(set(pdf_sources))
         print(f"📚 {unique_pdfs} PDFs auto-loaded")
         print(f"📦 {len(pdf_sources)} chunks available")
-        
-
 
 
 # ============================================================
 # ALSO ADD: Safe getter function for rag_metadata
 # ============================================================
 
+
 def get_rag_metadata():
     """
     Safe getter for rag_metadata with fallback
     """
     global rag_metadata
-    
+
     try:
-        if 'rag_metadata' not in globals():
+        if "rag_metadata" not in globals():
             initialize_rag_metadata()
-        
+
         return rag_metadata
-    
+
     except Exception as e:
         debug_log(f"⚠️ Error getting rag_metadata: {e}")
         return {
@@ -9458,9 +10018,6 @@ def get_rag_metadata():
             "total_documents": 0,
             "last_updated": None,
         }
-
-
-
 
 
 # ================= HYBRID RAG =================
@@ -9476,12 +10033,13 @@ if RAG_ENGINE and emb_model:
 # ENHANCED RAG RETRIEVAL WITH CONVERSATION AWARENESS
 # ============================================================
 
+
 def enhanced_rag_retrieval(
     query: str,
     chat_history: list = None,
     top_k: int = 5,
     min_score: float = 0.20,  # ✅ LOWERED from 0.30
-    use_conversation_context: bool = True
+    use_conversation_context: bool = True,
 ) -> Tuple[str, List, float]:
     """
     Enhanced RAG retrieval with aggressive relevance boosting
@@ -9489,14 +10047,14 @@ def enhanced_rag_retrieval(
     if not RAG_ADAPTER:
         debug_log("⚠️ RAG_ADAPTER not available")
         return "", [], 0.0
-    
+
     try:
         # ============================================================
         # STEP 1: Smart query preprocessing with EXPANSION
         # ============================================================
         expanded_query = query
         query_variations = [query]  # Start with original
-        
+
         # Context expansion for anaphora
         if use_conversation_context and chat_history:
             recent_context = []
@@ -9504,16 +10062,16 @@ def enhanced_rag_retrieval(
                 user_msg = entry.get("user", "")
                 if user_msg:
                     recent_context.append(user_msg)
-            
+
             anaphora_words = ["it", "that", "this", "them", "these", "those"]
             query_words = query.lower().split()
             has_anaphora = any(word in query_words for word in anaphora_words)
-            
+
             if has_anaphora and recent_context and len(query_words) < 8:
                 prev_query = recent_context[-1]
                 expanded_query = f"{prev_query} {query}"
                 debug_log(f"🔍 Context expanded: '{expanded_query}'")
-        
+
         # ✅ CRITICAL FIX: Generate query variations for better matching
         # This helps match "full meaning of mcp" to "mcp" documents
         try:
@@ -9532,11 +10090,11 @@ def enhanced_rag_retrieval(
         except Exception as e:
             debug_log(f"⚠️ Query expansion failed: {e}, using original")
             query_variations = [expanded_query]
-        
+
         # Extract key terms for better matching
         key_terms = extract_key_terms(expanded_query)
         debug_log(f"🎯 Key terms: {key_terms}")
-        
+
         # ============================================================
         # STEP 2: Multi-method retrieval with QUERY VARIATIONS
         # ============================================================
@@ -9546,14 +10104,12 @@ def enhanced_rag_retrieval(
         # Search using ALL query variations
         for idx, query_var in enumerate(query_variations):
             debug_log(f"\n🔍 Searching with variation {idx + 1}: '{query_var}'")
-            
+
             # Method 1: Hybrid search (primary)
             hybrid_results = RAG_ADAPTER.rag_db.retrieve(
-                query_var,
-                top_k=top_k * 3,
-                method="hybrid"
+                query_var, top_k=top_k * 3, method="hybrid"
             )
-            
+
             if hybrid_results:
                 debug_log(f"   📊 Hybrid: {len(hybrid_results)} results")
                 existing_ids = {r.chunk.chunk_id for r in all_results}
@@ -9565,14 +10121,12 @@ def enhanced_rag_retrieval(
                         new_count += 1
                 if new_count > 0:
                     debug_log(f"   ✅ Added {new_count} new results from hybrid")
-            
+
             # Method 2: Vector search (semantic similarity)
             vector_results = RAG_ADAPTER.rag_db.retrieve(
-                query_var,
-                top_k=top_k * 3,
-                method="vector"
+                query_var, top_k=top_k * 3, method="vector"
             )
-            
+
             if vector_results:
                 debug_log(f"   📊 Vector: {len(vector_results)} results")
                 existing_ids = {r.chunk.chunk_id for r in all_results}
@@ -9584,14 +10138,12 @@ def enhanced_rag_retrieval(
                         new_count += 1
                 if new_count > 0:
                     debug_log(f"   ✅ Added {new_count} new results from vector")
-            
+
             # Method 3: vector search (keyword matching)
             vector_results = RAG_ADAPTER.rag_db.retrieve(
-                query_var,
-                top_k=top_k * 3,
-                method="vector"
+                query_var, top_k=top_k * 3, method="vector"
             )
-            
+
             if vector_results:
                 debug_log(f"   📊 vector: {len(vector_results)} results")
                 existing_ids = {r.chunk.chunk_id for r in all_results}
@@ -9623,113 +10175,154 @@ def enhanced_rag_retrieval(
         if not filtered_results and all_results:
             # FALLBACK: Use top results even if below threshold
             debug_log(f"⚠️ No results above {min_score}, using top 5 by score")
-            filtered_results = sorted(all_results, key=lambda x: x.score, reverse=True)[:5]
+            filtered_results = sorted(all_results, key=lambda x: x.score, reverse=True)[
+                :5
+            ]
 
         if not filtered_results:
             debug_log(f"❌ No results found even after fallback")
             return "", [], 0.0
 
         debug_log(f"✅ {len(filtered_results)} results after filtering")
-        all_results = filtered_results  # Continue with filtered results  
-        
+        all_results = filtered_results  # Continue with filtered results
+
         # ============================================================
         # STEP 3: SMART SCORING with key term boosting
         # ============================================================
         for result in all_results:
             content_lower = result.chunk.content.lower()
-            
+
             # Boost score if key terms found
             term_matches = sum(1 for term in key_terms if term in content_lower)
             if term_matches > 0:
                 boost = 0.15 * term_matches  # +15% per key term
                 result.score = min(result.score + boost, 1.0)
-                debug_log(f"   📈 Boosted {result.chunk.chunk_id[:8]} by {boost:.2f} ({term_matches} terms)")
-        
+                debug_log(
+                    f"   📈 Boosted {result.chunk.chunk_id[:8]} by {boost:.2f} ({term_matches} terms)"
+                )
+
         # ============================================================
         # STEP 4: Adaptive filtering (NOT strict)
         # ============================================================
         # Sort by score first
         all_results.sort(key=lambda x: x.score, reverse=True)
-        
+
         # Filter by minimum score
         filtered_results = [r for r in all_results if r.score >= min_score]
-        
+
         if not filtered_results:
             # ✅ FALLBACK: Use top 3 results regardless of score
             filtered_results = all_results[:3]
             debug_log(f"📌 Using top {len(filtered_results)} results (below threshold)")
-        
+
         # Take top_k
         filtered_results = filtered_results[:top_k]
-        
+
         # ============================================================
         # STEP 5: Reranking (final relevance boost)
         # ============================================================
         filtered_results = rerank_results(expanded_query, filtered_results, key_terms)
-        
+
         # ============================================================
         # STEP 6: Build rich context
         # ============================================================
         sources = set(r.chunk.source_name for r in filtered_results)
-        debug_log(f"✅ Final: {len(filtered_results)} chunks from {len(sources)} source(s)")
-        
+        debug_log(
+            f"✅ Final: {len(filtered_results)} chunks from {len(sources)} source(s)"
+        )
+
         for source in sources:
-            source_results = [r for r in filtered_results if r.chunk.source_name == source]
+            source_results = [
+                r for r in filtered_results if r.chunk.source_name == source
+            ]
             avg_score = sum(r.score for r in source_results) / len(source_results)
-            debug_log(f"  📄 {source}: {len(source_results)} chunks (avg: {avg_score:.3f})")
-        
+            debug_log(
+                f"  📄 {source}: {len(source_results)} chunks (avg: {avg_score:.3f})"
+            )
+
         # Build context with relevance indicators
         context_parts = []
-        
+
         for i, r in enumerate(filtered_results, 1):
-            relevance_label = "⭐ HIGH" if r.score >= 0.7 else "✓ RELEVANT" if r.score >= 0.4 else "• LOW"
+            relevance_label = (
+                "⭐ HIGH"
+                if r.score >= 0.7
+                else "✓ RELEVANT" if r.score >= 0.4 else "• LOW"
+            )
             context_parts.append(
                 f"[Source {i}: {r.chunk.source_name}] ({relevance_label} - {r.score:.2f})\n{r.chunk.content}"
             )
-        
+
         context = "\n\n---\n\n".join(context_parts)
-        
+
         # Truncate intelligently
         MAX_CONTEXT_LENGTH = 3000  # ✅ INCREASED from 2500
         if len(context) > MAX_CONTEXT_LENGTH:
             # Keep highest-scoring chunks
-            context = context[:MAX_CONTEXT_LENGTH] + "\n\n[Additional content available but truncated for brevity...]"
+            context = (
+                context[:MAX_CONTEXT_LENGTH]
+                + "\n\n[Additional content available but truncated for brevity...]"
+            )
             debug_log(f"✂️ Context truncated to {MAX_CONTEXT_LENGTH} chars")
-        
+
         avg_confidence = sum(r.score for r in filtered_results) / len(filtered_results)
         debug_log(f"📊 Confidence: {avg_confidence:.3f}")
-        
+
         return context, filtered_results, avg_confidence
-        
+
     except Exception as e:
         debug_log(f"❌ RAG retrieval error: {e}")
         import traceback
+
         traceback.print_exc()
         return "", [], 0.0
+
 
 # ============================================================
 # RAG HELPER FUNCTIONS (NEW)
 # ============================================================
+
 
 def extract_key_terms(query: str) -> List[str]:
     """
     Extract key terms from query for relevance boosting
     """
     import re
-    
+
     # Remove common stop words
     stop_words = {
-        'what', 'is', 'the', 'a', 'an', 'how', 'why', 'when', 'where',
-        'who', 'which', 'can', 'does', 'do', 'tell', 'me', 'about',
-        'explain', 'describe', 'show', 'give', 'find', 'get', 'make'
+        "what",
+        "is",
+        "the",
+        "a",
+        "an",
+        "how",
+        "why",
+        "when",
+        "where",
+        "who",
+        "which",
+        "can",
+        "does",
+        "do",
+        "tell",
+        "me",
+        "about",
+        "explain",
+        "describe",
+        "show",
+        "give",
+        "find",
+        "get",
+        "make",
     }
-    
+
     # Extract words (alphanumeric + underscores)
-    words = re.findall(r'\b\w+\b', query.lower())
-    
+    words = re.findall(r"\b\w+\b", query.lower())
+
     # Filter out stop words and short words
     key_terms = [w for w in words if len(w) > 3 and w not in stop_words]
-    
+
     return key_terms[:5]  # Top 5 key terms
 
 
@@ -9739,41 +10332,41 @@ def rerank_results(query: str, results: List, key_terms: List[str]) -> List:
     """
     if not results:
         return results
-    
+
     query_lower = query.lower()
-    
+
     for result in results:
         content_lower = result.chunk.content.lower()
-        
+
         # Signal 1: Query term density
         query_words = query_lower.split()
         matches = sum(1 for word in query_words if word in content_lower)
         density_score = matches / len(query_words) if query_words else 0
-        
+
         # Signal 2: Position of matches (earlier = better)
-        first_match_pos = float('inf')
+        first_match_pos = float("inf")
         for word in query_words:
             pos = content_lower.find(word)
             if pos != -1:
                 first_match_pos = min(first_match_pos, pos)
-        
-        position_score = 1.0 if first_match_pos < 100 else 0.5 if first_match_pos < 500 else 0.2
-        
+
+        position_score = (
+            1.0 if first_match_pos < 100 else 0.5 if first_match_pos < 500 else 0.2
+        )
+
         # Signal 3: Content length (prefer substantial chunks)
         length_score = min(len(result.chunk.content) / 500, 1.0)
-        
+
         # Combined reranking score
         rerank_boost = (
-            0.4 * density_score +
-            0.3 * position_score +
-            0.3 * length_score
+            0.4 * density_score + 0.3 * position_score + 0.3 * length_score
         ) * 0.2  # Max 20% boost
-        
+
         result.score = min(result.score + rerank_boost, 1.0)
-    
+
     # Sort by new scores
     results.sort(key=lambda x: x.score, reverse=True)
-    
+
     return results
 
 
@@ -9793,138 +10386,138 @@ class EmojiPersonality:
     TOPIC_PATTERNS = {
         "science_tech": (
             r"\b(science|data|research|tech|technology|digital|ai|artificial intelligence|machine learning|space|math|physics|engine|system|logic|robot|code|software|hardware|algorithm|network)\b",
-            ["🔬","💻","🛰️","🧬","🧪","⚙️","🤖","🧠","📡","🔍","🖥️","📊"]
+            ["🔬", "💻", "🛰️", "🧬", "🧪", "⚙️", "🤖", "🧠", "📡", "🔍", "🖥️", "📊"],
         ),
         "programming": (
             r"\b(code|debug|python|javascript|java|compile|error|exception|syntax|api|backend|frontend|database|server|framework|deploy)\b",
-            ["🐍","💻","🛠️","📦","🧩","⚡","🔧","📁","📜","🖥️","🚀"]
+            ["🐍", "💻", "🛠️", "📦", "🧩", "⚡", "🔧", "📁", "📜", "🖥️", "🚀"],
         ),
         "gaming": (
             r"\b(game|gaming|player|level|quest|mission|battle|fps|rpg|strategy|console|xbox|playstation|nintendo|zelda|horizon|elden|fortnite|minecraft|pubg|call of duty|gta|grand theft auto)\b",
-            ["🎮","🕹️","🏆","🔥","⚔️","🎯","👾","🛡️","🎲","💥"]
+            ["🎮", "🕹️", "🏆", "🔥", "⚔️", "🎯", "👾", "🛡️", "🎲", "💥"],
         ),
         "nature_env": (
             r"\b(nature|weather|climate|environment|plant|animal|world|earth|ocean|green|energy|forest|wildlife|mountain|river)\b",
-            ["🌿","🌍","☀️","🌊","🌲","🐾","🌻","🍃","⛰️","🌦️"]
+            ["🌿", "🌍", "☀️", "🌊", "🌲", "🐾", "🌻", "🍃", "⛰️", "🌦️"],
         ),
         "business_finance": (
             r"\b(money|business|market|finance|growth|career|work|success|company|strategy|investment|profit|startup|economy|sales)\b",
-            ["📈","💼","💰","🤝","🚀","📊","🏦","💹","🧾","📉"]
+            ["📈", "💼", "💰", "🤝", "🚀", "📊", "🏦", "💹", "🧾", "📉"],
         ),
         "education_learning": (
             r"\b(learn|study|school|university|exam|knowledge|course|lesson|teach|training|skill|academic)\b",
-            ["📚","🎓","📝","📖","🧠","✏️","📘","🏫","📑"]
+            ["📚", "🎓", "📝", "📖", "🧠", "✏️", "📘", "🏫", "📑"],
         ),
         "health_wellbeing": (
             r"\b(health|fitness|food|mind|body|rest|wellness|safety|protection|balance|diet|exercise|sleep|medical)\b",
-            ["🥗","💪","🧠","🧘","🍎","🛡️","🏥","💊","❤️","🩺"]
+            ["🥗", "💪", "🧠", "🧘", "🍎", "🛡️", "🏥", "💊", "❤️", "🩺"],
         ),
         "humanities_arts": (
             r"\b(art|music|history|culture|society|literature|design|philosophy|creative|poetry|theatre|film|movie)\b",
-            ["🎨","🎭","🎻","📜","🏛️","🖋️","🎬","🎼","🖼️"]
+            ["🎨", "🎭", "🎻", "📜", "🏛️", "🖋️", "🎬", "🎼", "🖼️"],
         ),
         "storytelling": (
             r"\b(story|narrative|plot|character|tale|emotional|journey|survival|connection|experience)\b",
-            ["📖","🎭","💔","✨","🌟","💫","🎬"]
+            ["📖", "🎭", "💔", "✨", "🌟", "💫", "🎬"],
         ),
         "adventure": (
             r"\b(adventure|explore|quest|journey|discover|open.world|vast|beautiful)\b",
-            ["🗺️","🌄","⛰️","🧭","🎒","✨","🌍"]
+            ["🗺️", "🌄", "⛰️", "🧭", "🎒", "✨", "🌍"],
         ),
         "action": (
             r"\b(action|combat|fight|battle|mechanics|gameplay|hunt|rpg|shooter|multiplayer|campaign)\b",
-            ["⚔️","🎯","💥","🔥","🛡️","⚡","🏹"]
+            ["⚔️", "🎯", "💥", "🔥", "🛡️", "⚡", "🏹"],
         ),
         "creative_build": (
             r"\b(build|create|sandbox|blocky|craft|construct|resource|treasure)\b",
-            ["🏗️","🧱","⛏️","💎","🎨","🔨"]
+            ["🏗️", "🧱", "⛏️", "💎", "🎨", "🔨"],
         ),
         "survival": (
             r"\b(survive|survival|last one standing|realistic|intense)\b",
-            ["🎯","💪","🏆","⚠️"]
+            ["🎯", "💪", "🏆", "⚠️"],
         ),
         "communication": (
             r"\b(talk|discuss|media|news|write|speak|question|social|connection|community|message|email|chat|conversation)\b",
-            ["🗣️","📱","🌐","📢","💬","✉️","📡","🤝"]
+            ["🗣️", "📱", "🌐", "📢", "💬", "✉️", "📡", "🤝"],
         ),
         "travel": (
             r"\b(travel|trip|journey|flight|hotel|vacation|tour|explore|destination|adventure)\b",
-            ["✈️","🌍","🧳","🏖️","🗺️","🚗","🚆","🏕️"]
+            ["✈️", "🌍", "🧳", "🏖️", "🗺️", "🚗", "🚆", "🏕️"],
         ),
         "relationships": (
             r"\b(friend|family|relationship|partner|love|support|trust|together|team)\b",
-            ["❤️","🤝","👨‍👩‍👧‍👦","💞","💬","🌟","🫶"]
-        )
+            ["❤️", "🤝", "👨‍👩‍👧‍👦", "💞", "💬", "🌟", "🫶"],
+        ),
     }
 
     EMOTIONS = {
         "positive": (
             r"\b(good|great|awesome|happy|excellent|perfect|love|enjoy|solved|done|success|amazing|fantastic|brilliant|incredible|masterpiece|critically acclaimed|popular|highly rated)\b",
-            ["✨","✅","🎉","🌟","👍","💯","🔥","🙌","🥳"]
+            ["✨", "✅", "🎉", "🌟", "👍", "💯", "🔥", "🙌", "🥳"],
         ),
         "thoughtful": (
             r"\b(think|understand|consider|why|how|analyze|perspective|concept|idea|reflect|explore|evaluate|thought.provoking)\b",
-            ["🤔","💭","💡","🧩","🔍","📌","🧐","📎"]
+            ["🤔", "💭", "💡", "🧩", "🔍", "📌", "🧐", "📎"],
         ),
         "cautionary": (
             r"\b(but|however|risk|issue|problem|error|careful|warning|difficult|complex|challenge|concern|keep in mind)\b",
-            ["⚠️","😬","👀","❗","🛑","🚧","🔎"]
+            ["⚠️", "😬", "👀", "❗", "🛑", "🚧", "🔎"],
         ),
         "curious": (
             r"\b(curious|interesting|wonder|discover|explore|intriguing|mysterious)\b",
-            ["🧐","🔎","✨","👁️","📡","🧠"]
+            ["🧐", "🔎", "✨", "👁️", "📡", "🧠"],
         ),
         "serious": (
             r"\b(important|critical|essential|significant|major|key|vital)\b",
-            ["📌","❗","🔑","⚖️","📍"]
+            ["📌", "❗", "🔑", "⚖️", "📍"],
         ),
         "engaging": (
             r"\b(engaging|compelling|captivating|immersive|rich|powerful|unique|innovative|addictive|colorful)\b",
-            ["🎯","✨","🌟","💎","🔥"]
+            ["🎯", "✨", "🌟", "💎", "🔥"],
         ),
         "fun": (
             r"\b(fun|exciting|enjoy|classic|following)\b",
-            ["🎉","😄","🎊","🌈"]
-        )
+            ["🎉", "😄", "🎊", "🌈"],
+        ),
     }
 
     POSITIONAL = {
-        "opening": ["👋","✨","🎯","💡","🚀","🌟"],
-        "closing": ["✅","🏁","🙌","👍","🎉","💬"],
-        "generic": ["🔹","📍","✨","➡️"]
+        "opening": ["👋", "✨", "🎯", "💡", "🚀", "🌟"],
+        "closing": ["✅", "🏁", "🙌", "👍", "🎉", "💬"],
+        "generic": ["🔹", "📍", "✨", "➡️"],
     }
 
     MODE_SETTINGS = {
         "formal": {"sentences_per_emoji": 5, "max_per_block": 1, "list_emojis": 1},
         "balanced": {"sentences_per_emoji": 3, "max_per_block": 2, "list_emojis": 1},
-        "playful": {"sentences_per_emoji": 2, "max_per_block": 3, "list_emojis": 1}
+        "playful": {"sentences_per_emoji": 2, "max_per_block": 3, "list_emojis": 1},
     }
 
     def __init__(self, mode: str = "balanced"):
         self.mode = mode
         self.rotation_index = {}
         self.used_emojis = deque(maxlen=15)
-        
+
         # ⚡ OPTIMIZATION 1: Pre-compile all regex patterns
         self.compiled_topics = {
             name: (re.compile(pattern, re.IGNORECASE), emojis)
             for name, (pattern, emojis) in self.TOPIC_PATTERNS.items()
         }
-        
+
         self.compiled_emotions = {
             name: (re.compile(pattern, re.IGNORECASE), emojis)
             for name, (pattern, emojis) in self.EMOTIONS.items()
         }
-        
+
         # ⚡ OPTIMIZATION 2: Create quick keyword lookup for fast path
         self._build_keyword_index()
-        
+
         self.reset()
 
     def _build_keyword_index(self):
         """Build a simple keyword index for ultra-fast matching of common terms."""
         self.keyword_map = {}
-        
+
         # Extract first keyword from each pattern for quick checks
         common_keywords = {
             "code": "programming",
@@ -9935,7 +10528,7 @@ class EmojiPersonality:
             "health": "health_wellbeing",
             "art": "humanities_arts",
         }
-        
+
         self.keyword_map = common_keywords
 
     def reset(self):
@@ -9959,7 +10552,7 @@ class EmojiPersonality:
         OPTIMIZED: Get contextually appropriate emoji with multiple speedups.
         """
         text_lower = text.lower()
-        
+
         # ⚡ FAST PATH: Check simple keywords first
         for keyword, category in self.keyword_map.items():
             if keyword in text_lower:
@@ -9969,10 +10562,10 @@ class EmojiPersonality:
                     self.used_emojis.append(emoji)
                     self.emoji_count += 1
                     return emoji
-        
+
         # ⚡ NORMAL PATH: Use pre-compiled patterns
         candidates = []
-        
+
         # 1. Check topics with compiled patterns
         for _, (compiled_pattern, pool) in self.compiled_topics.items():
             if compiled_pattern.search(text_lower):
@@ -9990,7 +10583,12 @@ class EmojiPersonality:
 
         # 3. Positional fallback
         if not candidates:
-            candidates.append((self._rotate(self.POSITIONAL.get(pos, self.POSITIONAL["generic"])), 0.5))
+            candidates.append(
+                (
+                    self._rotate(self.POSITIONAL.get(pos, self.POSITIONAL["generic"])),
+                    0.5,
+                )
+            )
 
         # Sort by weight and select best unused emoji
         candidates.sort(key=lambda x: x[1], reverse=True)
@@ -10018,214 +10616,224 @@ class SmartEmojiFormatter:
     """
     OPTIMIZED: Handles intelligent emoji insertion with better performance.
     """
-    
+
     def __init__(self, handler: EmojiPersonality):
         self.handler = handler
-        
+
         # ⚡ Pre-compile regex patterns used in formatting
-        self.list_line_pattern = re.compile(r'^\s*(\d+\.|\*|-|•)\s+')
-        self.colon_line_pattern = re.compile(r'^\s*[A-Z][^:]{3,40}:\s+')
-        self.traditional_list_pattern = re.compile(r'^(\s*)(\d+\.|\*|-|•)(\s+)(.*)$')
-        self.colon_list_pattern = re.compile(r'^(\s*)([A-Z][^:]{3,40}:)(\s*)(.*)$')
-        self.sentence_split_pattern = re.compile(r'(?<=[.!?])\s+')
+        self.list_line_pattern = re.compile(r"^\s*(\d+\.|\*|-|•)\s+")
+        self.colon_line_pattern = re.compile(r"^\s*[A-Z][^:]{3,40}:\s+")
+        self.traditional_list_pattern = re.compile(r"^(\s*)(\d+\.|\*|-|•)(\s+)(.*)$")
+        self.colon_list_pattern = re.compile(r"^(\s*)([A-Z][^:]{3,40}:)(\s*)(.*)$")
+        self.sentence_split_pattern = re.compile(r"(?<=[.!?])\s+")
 
     def format(self, text: str, query: str = "") -> str:
         if not text:
             return text
-        
+
         self.handler.reset()
-        
+
         # Split into blocks
-        if '\n\n' in text:
-            blocks = text.split('\n\n')
+        if "\n\n" in text:
+            blocks = text.split("\n\n")
         else:
             blocks = self._smart_block_split(text)
-        
+
         formatted_blocks = []
-        
+
         for block in blocks:
             if not block.strip():
                 formatted_blocks.append(block)
                 continue
-            
+
             # Check if this block is a list
             if self._is_list_block(block):
                 formatted_block = self._format_list(block, query)
             else:
                 formatted_block = self._format_paragraph(block, query)
-            
+
             formatted_blocks.append(formatted_block)
-        
+
         # Rejoin with the same separator
-        if '\n\n' in text:
-            return '\n\n'.join(formatted_blocks)
+        if "\n\n" in text:
+            return "\n\n".join(formatted_blocks)
         else:
-            return '\n'.join(formatted_blocks)
-    
+            return "\n".join(formatted_blocks)
+
     def _smart_block_split(self, text: str) -> List[str]:
         """Split text into blocks when there are no double newlines."""
-        lines = text.split('\n')
+        lines = text.split("\n")
         blocks = []
         current_block = []
-        
+
         for i, line in enumerate(lines):
             current_block.append(line)
-            
+
             if i < len(lines) - 1:
                 next_line = lines[i + 1]
-                
+
                 is_current_list = self._is_list_line(line)
                 is_next_list = self._is_list_line(next_line)
-                
+
                 if is_current_list != is_next_list:
-                    blocks.append('\n'.join(current_block))
+                    blocks.append("\n".join(current_block))
                     current_block = []
-        
+
         if current_block:
-            blocks.append('\n'.join(current_block))
-        
+            blocks.append("\n".join(current_block))
+
         return blocks
-    
+
     def _is_list_line(self, line: str) -> bool:
         """Check if a single line is a list item using pre-compiled patterns."""
-        return bool(self.list_line_pattern.match(line)) or \
-               bool(self.colon_line_pattern.match(line))
-    
+        return bool(self.list_line_pattern.match(line)) or bool(
+            self.colon_line_pattern.match(line)
+        )
+
     def _is_list_block(self, block: str) -> bool:
         """Check if a block contains list items."""
-        lines = block.strip().split('\n')
-        
-        traditional_list_count = sum(1 for line in lines 
-                                     if self.list_line_pattern.match(line))
-        
-        colon_list_count = sum(1 for line in lines 
-                               if self.colon_line_pattern.match(line))
-        
+        lines = block.strip().split("\n")
+
+        traditional_list_count = sum(
+            1 for line in lines if self.list_line_pattern.match(line)
+        )
+
+        colon_list_count = sum(
+            1 for line in lines if self.colon_line_pattern.match(line)
+        )
+
         return (traditional_list_count > 0) or (colon_list_count >= 2)
-    
+
     def _format_list(self, block: str, query: str) -> str:
         """Format a list block with emojis."""
-        lines = block.split('\n')
+        lines = block.split("\n")
         formatted_lines = []
         settings = self.handler.MODE_SETTINGS[self.handler.mode]
-        
+
         for line in lines:
             if not line.strip():
                 formatted_lines.append(line)
                 continue
-            
+
             # Use pre-compiled patterns
             traditional_match = self.traditional_list_pattern.match(line)
             colon_match = self.colon_list_pattern.match(line)
-            
+
             if traditional_match:
                 indent, marker, space, content = traditional_match.groups()
                 segments = self._split_list_content(content)
-                formatted_content = self._add_emojis_to_segments(segments, query, settings["list_emojis"])
+                formatted_content = self._add_emojis_to_segments(
+                    segments, query, settings["list_emojis"]
+                )
                 line = f"{indent}{marker}{space}{formatted_content}"
-            
+
             elif colon_match:
                 indent, title_with_colon, space, content = colon_match.groups()
                 segments = self._split_list_content(content)
-                formatted_content = self._add_emojis_to_segments(segments, query, settings["list_emojis"])
+                formatted_content = self._add_emojis_to_segments(
+                    segments, query, settings["list_emojis"]
+                )
                 line = f"{indent}{title_with_colon}{space}{formatted_content}"
-            
+
             formatted_lines.append(line)
-        
-        return '\n'.join(formatted_lines)
-    
-    def _add_emojis_to_segments(self, segments: List[str], query: str, emoji_count: int) -> str:
+
+        return "\n".join(formatted_lines)
+
+    def _add_emojis_to_segments(
+        self, segments: List[str], query: str, emoji_count: int
+    ) -> str:
         """Add emojis to list item segments."""
         formatted_segments = []
-        
+
         for i, segment in enumerate(segments):
             if i < emoji_count and segment.strip():
                 emoji = self.handler.get_emoji(segment + " " + query, "generic")
                 formatted_segments.append(f"{segment.rstrip()} {emoji}")
             else:
                 formatted_segments.append(segment)
-        
+
         return " ".join(formatted_segments)
-    
+
     def _split_list_content(self, content: str) -> List[str]:
         """Split list item content into segments."""
         segments = []
-        
-        if '. ' in content and content.count('. ') <= 2:
-            sentence_parts = [s.strip() + '.' for s in content.split('. ') if s.strip()]
-            if sentence_parts and not content.endswith('.'):
-                sentence_parts[-1] = sentence_parts[-1].rstrip('.')
+
+        if ". " in content and content.count(". ") <= 2:
+            sentence_parts = [s.strip() + "." for s in content.split(". ") if s.strip()]
+            if sentence_parts and not content.endswith("."):
+                sentence_parts[-1] = sentence_parts[-1].rstrip(".")
             segments = sentence_parts
-        
-        elif '(' in content and ')' in content:
-            paren_split = re.split(r'(\([^)]+\))', content)
+
+        elif "(" in content and ")" in content:
+            paren_split = re.split(r"(\([^)]+\))", content)
             segments = [s.strip() for s in paren_split if s.strip()]
-        
-        elif ',' in content:
-            segments = [s.strip() for s in content.split(',') if s.strip()]
-        
+
+        elif "," in content:
+            segments = [s.strip() for s in content.split(",") if s.strip()]
+
         else:
             mid = len(content) // 2
-            space_idx = content.find(' ', mid)
+            space_idx = content.find(" ", mid)
             if space_idx > 0:
                 segments = [content[:space_idx], content[space_idx:]]
             else:
                 segments = [content]
-        
+
         return segments
-    
+
     def _format_paragraph(self, paragraph: str, query: str) -> str:
         """Format a paragraph with emojis."""
         settings = self.handler.MODE_SETTINGS[self.handler.mode]
-        
+
         # Use pre-compiled pattern for sentence splitting
         sentences = self.sentence_split_pattern.split(paragraph.strip())
-        
+
         if len(sentences) <= 1:
             return paragraph
-        
+
         formatted_sentences = []
         emojis_added = 0
-        
+
         for i, sentence in enumerate(sentences):
             if len(sentence.strip()) < 15:
                 formatted_sentences.append(sentence)
                 continue
-            
+
             pos = "generic"
             if i == 0:
                 pos = "opening"
             elif i == len(sentences) - 1 and len(sentences) > 3:
                 pos = "closing"
-            
+
             should_add = (
-                i % settings["sentences_per_emoji"] == 0 and
-                emojis_added < settings["max_per_block"]
+                i % settings["sentences_per_emoji"] == 0
+                and emojis_added < settings["max_per_block"]
             )
-            
+
             if should_add:
                 emoji = self.handler.get_emoji(sentence + " " + query, pos)
                 sentence = f"{sentence.rstrip()} {emoji}"
                 emojis_added += 1
-            
+
             formatted_sentences.append(sentence)
-        
-        return ' '.join(formatted_sentences)
+
+        return " ".join(formatted_sentences)
 
 
 # ========================================
 # USAGE FUNCTION (same API as before)
 # ========================================
 
+
 def add_contextual_emojis(text: str, query: str = "", mode: str = "playful") -> str:
     """
     Add contextual emojis to text with list-aware formatting.
-    
+
     Args:
         text: The text to format
         query: User query for context
         mode: 'formal', 'balanced', or 'playful'
-    
+
     Returns:
         Formatted text with contextually relevant emojis
     """
@@ -10244,44 +10852,45 @@ from typing import Optional, List
 ASSISTANT_NAME = "Project Elixer"
 
 # Minimal emoji use – real people don't overuse them
-EMOJI_REGEX = re.compile(r'[\U0001F300-\U0001FAFF\u2600-\u26FF\u2700-\u27BF]')
+EMOJI_REGEX = re.compile(r"[\U0001F300-\U0001FAFF\u2600-\u26FF\u2700-\u27BF]")
+
 
 def humanize_response(text: str) -> str:
     """
     Simplified humanization wrapper - calls sentient version
-    
+
     Args:
         text: Raw response text
-    
+
     Returns:
         Humanized response
     """
     if not text or len(text.strip()) < 3:
         return text
-    
+
     # Get chat history safely
     try:
         chat_history = persistent_data.get("chat_history", [])
     except:
         chat_history = []
-    
+
     # Call the full sentient version
     return humanize_response_sentient(text, user_msg=None, chat_history=chat_history)
 
+
 def humanize_response_sentient(
-    text: str, 
-    user_msg: Optional[str] = None, 
-    chat_history: List = None
+    text: str, user_msg: Optional[str] = None, chat_history: List = None
 ) -> str:
     """
     Personality-aware humanization - respects AI personality settings
     """
     if not text or len(text.strip()) < 3:
         return text
-    
+
     # Get personality profile to determine how much to humanize
     try:
         from yan import personality
+
         stats = personality.get_profile_stats("default")
         warmth = stats.get("warmth", 0.7)
         verbosity = stats.get("verbosity", 0.5)
@@ -10289,51 +10898,60 @@ def humanize_response_sentient(
         # Fallback if personality not available
         warmth = 0.7
         verbosity = 0.5
-    
+
     # Check user emoji preference
     use_emojis = user_manager.get_user_data("preferences.use_emojis", True)
-    
+
     # ============================================================
     # MINIMAL CLEANUP (always do this)
     # ============================================================
     text = remove_robotic_language(text)
     text = make_conversational(text)  # Basic contractions
-    
+
     # ============================================================
     # WARMTH-BASED FEATURES (only if warmth > 0.5)
     # ============================================================
     if warmth > 0.5:
         # Handle special greetings
-        if user_msg and re.match(r'^(hi|hey|hello|sup|yo|howdy)[\s!?]*$', user_msg.lower()):
+        if user_msg and re.match(
+            r"^(hi|hey|hello|sup|yo|howdy)[\s!?]*$", user_msg.lower()
+        ):
             user_name = user_manager.get_user_data("name")
             name_part = f" {user_name}" if user_name else ""
             return f"Hey{name_part}! What's up?"
-        
+
         # Thanks responses
-        if user_msg and re.search(r'\b(thanks|thank you|thx)\b', user_msg.lower()):
+        if user_msg and re.search(r"\b(thanks|thank you|thx)\b", user_msg.lower()):
             return "No problem! 😊" if use_emojis else "No problem!"
-        
+
         # Only add emojis if warm AND user wants them
         # First strip any emojis the LLM already put in to avoid doubles
         if use_emojis and warmth > 0.6:
-            text = re.sub(r'([\U0001F300-\U0001FAFF\u2600-\u26FF\u2700-\u27BF])\s*\1', r'\1', text)  # remove consecutive dupes
-            text = re.sub(r'([\U0001F300-\U0001FAFF\u2600-\u26FF\u2700-\u27BF])\s+([\U0001F300-\U0001FAFF\u2600-\u26FF\u2700-\u27BF])', r'\1', text)  # remove pairs
+            text = re.sub(
+                r"([\U0001F300-\U0001FAFF\u2600-\u26FF\u2700-\u27BF])\s*\1", r"\1", text
+            )  # remove consecutive dupes
+            text = re.sub(
+                r"([\U0001F300-\U0001FAFF\u2600-\u26FF\u2700-\u27BF])\s+([\U0001F300-\U0001FAFF\u2600-\u26FF\u2700-\u27BF])",
+                r"\1",
+                text,
+            )  # remove pairs
             text = add_contextual_emojis(text, user_msg or "")
-    
+
     # ============================================================
     # VERBOSITY-BASED FEATURES (only if verbose)
     # ============================================================
     if verbosity > 0.6:
         # Add natural flow/fillers only if being detailed anyway
         text = add_natural_flow(text, user_msg or "")
-    
+
     # ============================================================
     # PRESERVE CODE BLOCKS (always)
     # ============================================================
     if "```" in text:
         text = humanize_code_response(text)
-    
+
     return text.strip()
+
 
 def remove_robotic_language(text: str) -> str:
     """
@@ -10341,60 +10959,53 @@ def remove_robotic_language(text: str) -> str:
     """
     replacements = {
         # Ultra-formal phrases
-        r'\bI would be happy to\b': "I can",
-        r'\bI would be glad to\b': "I'll",
-        r'\bI am pleased to\b': "I'll",
-        r'\ballow me to\b': "let me",
-        r'\bpermit me to\b': "let me",
-        r'\bI shall\b': "I'll",
-
+        r"\bI would be happy to\b": "I can",
+        r"\bI would be glad to\b": "I'll",
+        r"\bI am pleased to\b": "I'll",
+        r"\ballow me to\b": "let me",
+        r"\bpermit me to\b": "let me",
+        r"\bI shall\b": "I'll",
         # Corporate speak
-        r'\bIt is important to note that\b': "Just so you know,",
-        r'\bIt should be noted that\b': "Heads up –",
-        r'\bIt is worth mentioning that\b': "Also,",
-        r'\bPlease be aware that\b': "FYI,",
-        r'\bKindly note that\b': "FYI,",
-        r'\bPlease note that\b': "Note:",
-
+        r"\bIt is important to note that\b": "Just so you know,",
+        r"\bIt should be noted that\b": "Heads up –",
+        r"\bIt is worth mentioning that\b": "Also,",
+        r"\bPlease be aware that\b": "FYI,",
+        r"\bKindly note that\b": "FYI,",
+        r"\bPlease note that\b": "Note:",
         # Transition overkill
-        r'\bFurthermore,\b': "Also,",
-        r'\bMoreover,\b': "Plus,",
-        r'\bAdditionally,\b': "Also,",
-        r'\bIn addition,\b': "Also,",
-        r'\bConsequently,\b': "So,",
-        r'\bTherefore,\b': "So,",
-        r'\bThus,\b': "So,",
-        r'\bHence,\b': "So,",
-        r'\bAccordingly,\b': "So,",
-
+        r"\bFurthermore,\b": "Also,",
+        r"\bMoreover,\b": "Plus,",
+        r"\bAdditionally,\b": "Also,",
+        r"\bIn addition,\b": "Also,",
+        r"\bConsequently,\b": "So,",
+        r"\bTherefore,\b": "So,",
+        r"\bThus,\b": "So,",
+        r"\bHence,\b": "So,",
+        r"\bAccordingly,\b": "So,",
         # Passive voice
-        r'\bcan be done by\b': "you can do it by",
-        r'\bmay be used to\b': "you can use it to",
-        r'\bshould be implemented\b': "you should implement",
-        r'\bmust be considered\b': "you need to consider",
-
+        r"\bcan be done by\b": "you can do it by",
+        r"\bmay be used to\b": "you can use it to",
+        r"\bshould be implemented\b": "you should implement",
+        r"\bmust be considered\b": "you need to consider",
         # AI self-references
-        r'\bAs an AI,?\b': "",
-        r'\bAs a language model,?\b': "",
-        r'\bAs an artificial intelligence,?\b': "",
-        r'\bI don\'t have personal (experiences?|opinions?|feelings?)\b': "",
-        r'\bI cannot (feel|experience)\b': "I can't",
-
+        r"\bAs an AI,?\b": "",
+        r"\bAs a language model,?\b": "",
+        r"\bAs an artificial intelligence,?\b": "",
+        r"\bI don\'t have personal (experiences?|opinions?|feelings?)\b": "",
+        r"\bI cannot (feel|experience)\b": "I can't",
         # Over-apologizing
-        r'\bI apologize for any confusion,?\b': "",
-        r'\bI\'m sorry for the confusion,?\b': "",
-        r'\bI apologize,?\b': "",
-        r'\bI\'m sorry,?\b': "",
-        
+        r"\bI apologize for any confusion,?\b": "",
+        r"\bI\'m sorry for the confusion,?\b": "",
+        r"\bI apologize,?\b": "",
+        r"\bI\'m sorry,?\b": "",
         # Hedging (sometimes useful, but often overused)
-        r'\bIt seems that\b': "",
-        r'\bIt appears that\b': "",
-        r'\bIt would seem\b': "",
-        
+        r"\bIt seems that\b": "",
+        r"\bIt appears that\b": "",
+        r"\bIt would seem\b": "",
         # Unnecessary qualifiers
-        r'\bvery much\b': "really",
-        r'\bquite simply\b': "basically",
-        r'\bbasically speaking\b': "basically",
+        r"\bvery much\b": "really",
+        r"\bquite simply\b": "basically",
+        r"\bbasically speaking\b": "basically",
     }
 
     for pattern, replacement in replacements.items():
@@ -10408,40 +11019,40 @@ def make_conversational(text: str) -> str:
     Convert formal writing to natural speech – ENHANCED
     """
     # Remove AI self-references
-    text = re.sub(r'\b(The AI|This AI|The assistant)\b', "I", text, flags=re.I)
-    text = re.sub(r'\b(The model|This model)\b', "I", text, flags=re.I)
+    text = re.sub(r"\b(The AI|This AI|The assistant)\b", "I", text, flags=re.I)
+    text = re.sub(r"\b(The model|This model)\b", "I", text, flags=re.I)
 
     # Contractions (essential for natural speech)
     contractions = {
-        r'\bI am\b': "I'm",
-        r'\byou are\b': "you're",
-        r'\bit is\b': "it's",
-        r'\bthat is\b': "that's",
-        r'\bwhat is\b': "what's",
-        r'\bwho is\b': "who's",
-        r'\bdo not\b': "don't",
-        r'\bdoes not\b': "doesn't",
-        r'\bcannot\b': "can't",
-        r'\bwill not\b': "won't",
-        r'\bshould not\b': "shouldn't",
-        r'\bwould not\b': "wouldn't",
-        r'\bcould not\b': "couldn't",
-        r'\bhas not\b': "hasn't",
-        r'\bhave not\b': "haven't",
-        r'\bhad not\b': "hadn't",
-        r'\bwas not\b': "wasn't",
-        r'\bwere not\b': "weren't",
+        r"\bI am\b": "I'm",
+        r"\byou are\b": "you're",
+        r"\bit is\b": "it's",
+        r"\bthat is\b": "that's",
+        r"\bwhat is\b": "what's",
+        r"\bwho is\b": "who's",
+        r"\bdo not\b": "don't",
+        r"\bdoes not\b": "doesn't",
+        r"\bcannot\b": "can't",
+        r"\bwill not\b": "won't",
+        r"\bshould not\b": "shouldn't",
+        r"\bwould not\b": "wouldn't",
+        r"\bcould not\b": "couldn't",
+        r"\bhas not\b": "hasn't",
+        r"\bhave not\b": "haven't",
+        r"\bhad not\b": "hadn't",
+        r"\bwas not\b": "wasn't",
+        r"\bwere not\b": "weren't",
     }
 
     for pattern, repl in contractions.items():
         text = re.sub(pattern, repl, text, flags=re.I)
 
     # Casual replacements
-    text = re.sub(r'^To answer your question,', "So,", text, flags=re.M | re.I)
-    text = re.sub(r'^In order to', "To", text, flags=re.M | re.I)
-    text = re.sub(r'^With regards? to', "About", text, flags=re.M | re.I)
-    text = re.sub(r'^Concerning\b', "About", text, flags=re.M | re.I)
-    text = re.sub(r'^Regarding\b', "About", text, flags=re.M | re.I)
+    text = re.sub(r"^To answer your question,", "So,", text, flags=re.M | re.I)
+    text = re.sub(r"^In order to", "To", text, flags=re.M | re.I)
+    text = re.sub(r"^With regards? to", "About", text, flags=re.M | re.I)
+    text = re.sub(r"^Concerning\b", "About", text, flags=re.M | re.I)
+    text = re.sub(r"^Regarding\b", "About", text, flags=re.M | re.I)
 
     return text
 
@@ -10452,25 +11063,33 @@ def add_natural_fillers(text: str, user_query: str) -> str:
     """
     if random.random() > 0.25:  # Only 25% of the time
         return text
-    
+
     query = user_query.lower() if user_query else ""
-    
+
     # Technical questions get fewer fillers
     if any(word in query for word in ["code", "function", "algorithm", "implement"]):
         return text
-    
+
     # Add fillers to explanations
     fillers = {
-        r'\bthis is\b': lambda: random.choice(["this is basically", "this is pretty much", "this is"]),
-        r'\bthat means\b': lambda: random.choice(["that basically means", "that means", "so that means"]),
-        r'\byou need to\b': lambda: random.choice(["you'll need to", "you gotta", "you need to"]),
-        r'\bthe reason is\b': lambda: random.choice(["the reason is basically", "the thing is", "the reason is"]),
+        r"\bthis is\b": lambda: random.choice(
+            ["this is basically", "this is pretty much", "this is"]
+        ),
+        r"\bthat means\b": lambda: random.choice(
+            ["that basically means", "that means", "so that means"]
+        ),
+        r"\byou need to\b": lambda: random.choice(
+            ["you'll need to", "you gotta", "you need to"]
+        ),
+        r"\bthe reason is\b": lambda: random.choice(
+            ["the reason is basically", "the thing is", "the reason is"]
+        ),
     }
-    
+
     for pattern, replacer in fillers.items():
         if random.random() < 0.4:  # 40% chance per pattern
             text = re.sub(pattern, replacer(), text, count=1, flags=re.I)
-    
+
     return text
 
 
@@ -10479,37 +11098,48 @@ def vary_sentence_starters(text: str) -> str:
     Vary how sentences begin to avoid repetition
     """
     # Split into sentences
-    sentences = re.split(r'([.!?]\s+)', text)
-    
+    sentences = re.split(r"([.!?]\s+)", text)
+
     # Track repeated starters
     starters = {}
     result = []
-    
+
     for i, part in enumerate(sentences):
         if i % 2 == 0:  # Actual sentences (not separators)
             # Get first word
-            match = re.match(r'^(\w+)', part.strip())
+            match = re.match(r"^(\w+)", part.strip())
             if match:
                 first_word = match.group(1).lower()
-                
+
                 # If we've seen this starter 2+ times, vary it
                 if first_word in starters and starters[first_word] >= 2:
                     variations = {
-                        'this': ['this', 'it', 'that'],
-                        'the': ['the', 'this', 'that'],
-                        'you': ['you', 'you can', "you'll"],
-                        'it': ['it', 'this', 'that'],
+                        "this": ["this", "it", "that"],
+                        "the": ["the", "this", "that"],
+                        "you": ["you", "you can", "you'll"],
+                        "it": ["it", "this", "that"],
                     }
-                    
+
                     if first_word in variations:
-                        replacement = random.choice([w for w in variations[first_word] if w != first_word])
-                        part = re.sub(r'^\w+', replacement.capitalize() if part[0].isupper() else replacement, part, count=1)
-                
+                        replacement = random.choice(
+                            [w for w in variations[first_word] if w != first_word]
+                        )
+                        part = re.sub(
+                            r"^\w+",
+                            (
+                                replacement.capitalize()
+                                if part[0].isupper()
+                                else replacement
+                            ),
+                            part,
+                            count=1,
+                        )
+
                 starters[first_word] = starters.get(first_word, 0) + 1
-        
+
         result.append(part)
-    
-    return ''.join(result)
+
+    return "".join(result)
 
 
 def add_natural_flow(text: str, user_query: str) -> str:
@@ -10520,7 +11150,7 @@ def add_natural_flow(text: str, user_query: str) -> str:
         return text
 
     # Don't add if already starts casually
-    if re.match(r'^(So|Alright|OK|Right|Yeah|Well|Basically|Look|Listen)', text, re.I):
+    if re.match(r"^(So|Alright|OK|Right|Yeah|Well|Basically|Look|Listen)", text, re.I):
         return text
 
     query = user_query.lower() if user_query else ""
@@ -10531,15 +11161,18 @@ def add_natural_flow(text: str, user_query: str) -> str:
     elif "what" in query:
         openers = ["So", "Basically", "Alright", "OK so", "Well,"]
     elif any(word in query for word in ["confused", "don't understand", "stuck"]):
-        openers = ["Okay, let me explain.", "Alright, here's the deal.", "So here's what's up."]
+        openers = [
+            "Okay, let me explain.",
+            "Alright, here's the deal.",
+            "So here's what's up.",
+        ]
     elif any(word in query for word in ["code", "program", "function"]):
         openers = ["So", "Alright", "Here's the thing:"]
 
-
     opener = random.choice(openers)
-    
+
     # Handle punctuation
-    if opener.endswith(('.', ':')):
+    if opener.endswith((".", ":")):
         return f"{opener} {text[0].upper()}{text[1:]}"
     else:
         return f"{opener}, {text[0].lower()}{text[1:]}"
@@ -10550,7 +11183,7 @@ def maybe_add_closer(text: str, user_query: str = "") -> str:
     Add a casual closer – MORE VARIED
     """
     # Don't add if text is short or already has a question/exclamation
-    if len(text.split()) < 20 or text.rstrip().endswith(('?', '!')):
+    if len(text.split()) < 20 or text.rstrip().endswith(("?", "!")):
         return text
 
     # Only add 25% of the time
@@ -10591,7 +11224,7 @@ def humanize_code_response(text: str) -> str:
     """
     Preserve code blocks, humanize surrounding explanation – ENHANCED
     """
-    parts = re.split(r'(```[\s\S]*?```)', text)
+    parts = re.split(r"(```[\s\S]*?```)", text)
     output = []
 
     for i, part in enumerate(parts):
@@ -10601,37 +11234,42 @@ def humanize_code_response(text: str) -> str:
             if part.strip():
                 part = remove_robotic_language(part)
                 part = make_conversational(part)
-                
+
                 # Vary "Here is" phrases
                 part = re.sub(
-                    r'\bHere is (the|a|an)\b',
-                    lambda _: random.choice([
-                        "Here's",
-                        "Check out",
-                        "Take a look at",
-                        "Here's what I got:",
-                        "Alright, here's",
-                    ]),
+                    r"\bHere is (the|a|an)\b",
+                    lambda _: random.choice(
+                        [
+                            "Here's",
+                            "Check out",
+                            "Take a look at",
+                            "Here's what I got:",
+                            "Alright, here's",
+                        ]
+                    ),
                     part,
-                    flags=re.I
+                    flags=re.I,
                 )
-                
+
                 # Vary "this code" phrases
                 part = re.sub(
-                    r'\bThis code\b',
-                    lambda _: random.choice([
-                        "This",
-                        "This code",
-                        "The code above",
-                        "This snippet",
-                    ]),
+                    r"\bThis code\b",
+                    lambda _: random.choice(
+                        [
+                            "This",
+                            "This code",
+                            "The code above",
+                            "This snippet",
+                        ]
+                    ),
                     part,
-                    flags=re.I
+                    flags=re.I,
                 )
-            
+
             output.append(part)
 
-    return ''.join(output)
+    return "".join(output)
+
 
 def _is_repeated_question(query: str, chat_history: list, lookback: int = 5) -> bool:
     """
@@ -10654,6 +11292,8 @@ def _is_repeated_question(query: str, chat_history: list, lookback: int = 5) -> 
             if overlap > 0.80:
                 return True
     return False
+
+
 # ============================================================
 # 🚀 AUTO-ACTIVATION LAYER (SAFE, NON-DESTRUCTIVE)
 # ============================================================
@@ -10661,22 +11301,25 @@ def _is_repeated_question(query: str, chat_history: list, lookback: int = 5) -> 
 # This wrapper guarantees intent + anaphora + memory
 # are ALWAYS applied before prompt construction.
 
-def build_prompt(system_msg: str, query: str, context: str = "", use_gemini: bool = False) -> str:
+
+def build_prompt(
+    system_msg: str, query: str, context: str = "", use_gemini: bool = False
+) -> str:
     """
     Master prompt builder with universal follow-up handling.
-    
+
     Handles ALL follow-up types equally: code, concepts, data, PDFs, web results, etc.
-    
+
     Args:
         system_msg: System/persona instructions
         query: User's current question
         context: Optional pre-built context (PDF, web results, etc.)
         use_gemini: Whether using Gemini (skip chat history for privacy)
-    
+
     Returns:
         Formatted prompt string for the LLM
     """
-    
+
     try:
         # ============================================================
         # STEP 1: Load chat history (skip if using Gemini)
@@ -10685,9 +11328,9 @@ def build_prompt(system_msg: str, query: str, context: str = "", use_gemini: boo
             chat_history = []
             debug_log(f"🔷 Gemini mode: Skipping chat history for privacy")
         else:
-            chat_history, _ = load_chat_history()  
+            chat_history, _ = load_chat_history()
             debug_log(f"📚 Loaded {len(chat_history)} messages from chat_history.json")
-        
+
         # ============================================================
         # STEP 2: Detect query intent
         # ============================================================
@@ -10702,31 +11345,29 @@ def build_prompt(system_msg: str, query: str, context: str = "", use_gemini: boo
         if is_repeated:
             debug_log(f"🔁 Repeated question detected — routing as new question")
         is_meta = intent_enum == QueryIntent.META_QUESTION
-        
+
         debug_log(f"🎯 Intent: {intent} | Follow-up: {is_followup}")
-        
+
         # ============================================================
         # STEP 3: Build context based on query type
         # ============================================================
-        
+
         final_context = ""
-        
+
         # PRIORITY 1: Caller provided explicit context (PDF/RAG/Web)
         if context and context.strip():
             debug_log(f"📦 Using caller context ({len(context)} chars)")
             final_context = context
-            
+
             # If it's a follow-up AND caller context exists, append conversation
             if is_followup and chat_history:
                 conv_context = build_universal_conversation_context(
-                    chat_history,
-                    max_chars=1000,
-                    max_turns=10
+                    chat_history, max_chars=1000, max_turns=10
                 )
                 if conv_context:
                     final_context = f"{context}\n\n---\n\n**Previous Conversation:**\n{conv_context}"
                     debug_log(f"   ➕ Added conversation context")
-        
+
         # PRIORITY 2: Follow-up question → need full conversation
         elif is_followup and intent_result.needs_context:
             debug_log(f"🔄 Building conversation context for follow-up")
@@ -10739,9 +11380,7 @@ def build_prompt(system_msg: str, query: str, context: str = "", use_gemini: boo
                 final_context = memory_context  # at least inject name
             else:
                 conv_context = build_universal_conversation_context(
-                    chat_history,
-                    max_chars=20000,
-                    max_turns=20
+                    chat_history, max_chars=20000, max_turns=20
                 )
 
                 if conv_context:
@@ -10751,20 +11390,18 @@ def build_prompt(system_msg: str, query: str, context: str = "", use_gemini: boo
                     else:
                         final_context = conv_context
                     system_msg = enhance_system_for_followup(
-                        system_msg,
-                        query,
-                        final_context
+                        system_msg, query, final_context
                     )
                     debug_log(f"   ✅ Built context ({len(final_context)} chars)")
                 else:
                     final_context = memory_context
                     debug_log("   ⚠️ Context building failed, using memory only")
-        
+
         # PRIORITY 3: New question → add memory/preferences only
         else:
             debug_log(f"🆕 New question - checking memory")
             memory_context = build_memory_context_with_name(query)
-            
+
             if memory_context and memory_context.strip():
                 final_context = memory_context
                 debug_log(f"   ✅ Added memory ({len(final_context)} chars)")
@@ -10783,128 +11420,136 @@ def build_prompt(system_msg: str, query: str, context: str = "", use_gemini: boo
         # STEP 4: Format prompt
         # ============================================================
         formatted_prompt = build_prompt_with_format(
-            system_msg,
-            query,
-            final_context,
-            MODEL_FORMAT
+            system_msg, query, final_context, MODEL_FORMAT
         )
-        
+
         debug_log(f"✅ Final prompt: {len(formatted_prompt)} chars")
         return formatted_prompt
-        
-            
+
     except Exception as e:
         debug_log(f"❌ Error in build_prompt: {e}")
         import traceback
+
         debug_log(f"Stack trace:\n{traceback.format_exc()}")
-        
+
         # Safe fallback
         return build_prompt_with_format(system_msg, query, context, MODEL_FORMAT)
 
+
 def build_universal_conversation_context(
-    chat_history: List[dict],
-    max_chars: int = 30000,
-    max_turns: int = 50
+    chat_history: List[dict], max_chars: int = 30000, max_turns: int = 50
 ) -> str:
     """
     Build conversation context that preserves ALL content types equally.
-    
+
     Handles:
     - Code snippets (preserve formatting)
     - Explanations (full text)
     - Data/tables (preserve structure)
     - PDFs (preserve citations)
     - Web results (preserve sources)
-    
+
     Args:
         chat_history: List of {"user": str, "ai": str} dicts
         max_chars: Maximum context length (default 50000 for ~100 messages)
         max_turns: Maximum conversation turns to include (default 100)
-    
+
     Returns:
         Formatted conversation context string
     """
     if not chat_history:
         return ""
-    
+
     # Start from most recent, work backwards
     recent_turns = list(reversed(chat_history[-max_turns:]))
-    
+
     context_parts = []
     total_chars = 0
-    
+
     for turn in recent_turns:
         user_msg = turn.get("user", "").strip()
         ai_msg = turn.get("ai", "").strip()
-        
+
         if not user_msg or not ai_msg:
             continue
-        
+
         # Format the turn
         turn_text = f"**User:** {user_msg}\n\n**Assistant:** {ai_msg}"
         turn_length = len(turn_text)
-        
+
         # Check if adding this turn exceeds limit
         if total_chars + turn_length > max_chars:
             # Try to fit a truncated version
             remaining = max_chars - total_chars
             if remaining > 200:  # Only truncate if we have meaningful space
                 # Truncate AI response, keep user query intact
-                truncated_ai = ai_msg[:remaining - len(user_msg) - 100] + "\n[...truncated]"
+                truncated_ai = (
+                    ai_msg[: remaining - len(user_msg) - 100] + "\n[...truncated]"
+                )
                 turn_text = f"**User:** {user_msg}\n\n**Assistant:** {truncated_ai}"
                 context_parts.append(turn_text)
             break
-        
+
         context_parts.append(turn_text)
         total_chars += turn_length
-    
+
     # Reverse to chronological order
     context_parts.reverse()
-    
+
     if not context_parts:
         return ""
-    
+
     # Build final context with clear structure
     conversation = "\n\n---\n\n".join(context_parts)
-    
-    debug_log(f"📝 Built conversation context: {len(context_parts)} turns, {len(conversation)} chars")
-    
+
+    debug_log(
+        f"📝 Built conversation context: {len(context_parts)} turns, {len(conversation)} chars"
+    )
+
     return conversation
 
 
-def enhance_system_for_followup(
-    system_msg: str,
-    query: str,
-    context: str
-) -> str:
+def enhance_system_for_followup(system_msg: str, query: str, context: str) -> str:
     """
     Enhance system message with follow-up awareness.
-    
+
     Detects what type of content the follow-up is about and adds
     appropriate instructions to the system message.
-    
+
     Args:
         system_msg: Original system message
         query: User's follow-up query
         context: Conversation context being provided
-    
+
     Returns:
         Enhanced system message
     """
     query_lower = query.lower()
-    
+
     # Detect what the follow-up is about
-    is_about_code = any(kw in query_lower for kw in [
-        "code", "function", "program", "script", "line", "syntax",
-        "implement", "write", "create", "build"
-    ])
-    
+    is_about_code = any(
+        kw in query_lower
+        for kw in [
+            "code",
+            "function",
+            "program",
+            "script",
+            "line",
+            "syntax",
+            "implement",
+            "write",
+            "create",
+            "build",
+        ]
+    )
+
     has_code_in_context = "```" in context
-    
-    is_pronoun_heavy = any(pronoun in query_lower for pronoun in [
-        " it ", " this ", " that ", " these ", " those ", " they "
-    ])
-    
+
+    is_pronoun_heavy = any(
+        pronoun in query_lower
+        for pronoun in [" it ", " this ", " that ", " these ", " those ", " they "]
+    )
+
     # Build appropriate enhancement
     if is_about_code and has_code_in_context:
         enhancement = (
@@ -10925,47 +11570,48 @@ def enhance_system_for_followup(
             "This is a follow-up question building on the previous conversation.\n"
             "The relevant conversation history is provided below."
         )
-    
+
     return system_msg + enhancement
+
 
 def build_followup_context(query: str, chat_history: List, intent: str) -> str:
     """
     Build context for follow-up queries with anaphora resolution
-    
+
     Args:
         query: Current user query
         chat_history: Recent conversation history
         intent: Detected intent ("followup" or other)
-    
+
     Returns:
         Context string explaining what pronouns refer to
     """
     if not chat_history or intent != "followup":
         return ""
-    
+
     # Get last exchange
     last_entry = chat_history[-1]
     last_user_msg = last_entry.get("user", "")
     last_ai_msg = last_entry.get("ai", "")
-    
+
     if not last_user_msg:
         return ""
-    
+
     # Build anaphora resolution context
     context = f"Previous question: {last_user_msg}\n"
-    
+
     # Extract main topic from previous answer
     if last_ai_msg:
         # Get first 100 chars as topic summary
         topic_summary = last_ai_msg[:100].strip()
         if len(last_ai_msg) > 100:
             topic_summary += "..."
-        
+
         context += f"Context: {topic_summary}\n"
-    
+
     return context
+
 
 # ============================================================
 # 🔚 END AUTO-ACTIVATION
 # =============================================================
-
