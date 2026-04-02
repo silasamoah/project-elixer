@@ -107,7 +107,7 @@ Without Piper, voice output is disabled (the rest of the app works normally).
 
 ## Migrating from the hardcoded-path version
 
-If you cloned this from an older version with paths like `C:\Users\salam\...`, the fix is:
+If you cloned this from an older version with paths like `C:\Users\User-Name\...`, the fix is:
 
 1. Copy `.env.example` → `.env`
 2. Set `MODEL_PATH`, `PIPER_EXECUTABLE`, and `PIPER_VOICES_DIR` in `.env`
