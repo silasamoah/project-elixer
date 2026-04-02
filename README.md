@@ -63,7 +63,7 @@ $env:HF_HUB_OFFLINE=0; python -c "from sentence_transformers import SentenceTran
 ### 6. Run the server
 
 ```bash
-python flask_server.py
+python flask_server.py alternatively double click START.bat
 ```
 
 Open **http://localhost:5000** in your browser.
@@ -89,6 +89,9 @@ project-elixer/
 ├── gemini_integration.py    # Gemini REST API wrapper
 ├── ai_personality_v6_final_production.py
 │
+├── piper/piper.exe
+├── voices/
+|
 ├── static/
 │   └── libs/               # highlight.js, marked.js (not committed — see below)
 │
