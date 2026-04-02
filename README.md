@@ -147,6 +147,7 @@ See [`.env.example`](.env.example) for the full list with descriptions.
 
 ## Example Correct .env Pattern
 
+```bash
 GEMINI_API_KEY=your_gemini_api_key_here
 
 MODEL_PATH=C:/Users/user/Downloads/Llama-3.1-8B-Instruct-Q4_K_M.gguf
@@ -163,6 +164,7 @@ FLASK_DEBUG=false
 HF_HOME=./hf_cache
 TRANSFORMERS_OFFLINE=1
 HF_HUB_OFFLINE=1
+```
 
 | Variable           | Required | Description                              |
 | ------------------ | -------- | ---------------------------------------- |
