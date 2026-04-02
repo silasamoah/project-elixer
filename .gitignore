@@ -43,10 +43,10 @@ models--*/
 # ============================================================
 # Piper TTS — binaries & voice models
 # ============================================================
-#piper/
-#voices/
-#*.onnx
-#*.onnx.json
+piper/
+voices/
+*.onnx
+*.onnx.json
 
 # ============================================================
 # Application Cache & Runtime Data
