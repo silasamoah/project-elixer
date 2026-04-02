@@ -212,12 +212,18 @@ from pathlib import Path
 import tempfile
 import os
 
-# Piper configuration
-PIPER_VOICES_DIR = Path(r"C:\Users\salam\Documents\VSC Projects\ChatBot\HTML\voices")
-PIPER_EXECUTABLE = Path(
-    r"C:\Users\salam\Documents\VSC Projects\ChatBot\HTML\piper\piper.exe"
-)
+from config import PIPER_VOICES_DIR, PIPER_EXECUTABLE, PIPER_MODELS, TESSERACT_CMD
 
+# ADD THIS:
+try:
+    import pytesseract
+except ImportError:
+    pytesseract = None
+    print("⚠️ pytesseract not installed — OCR features disabled")
+
+pytesseract.pytesseract.tesseract_cmd = TESSERACT_CMD
+
+"""
 # Voice models
 # Voice models - UPDATED with all GB Female voices
 PIPER_MODELS = {
@@ -264,7 +270,7 @@ PIPER_MODELS = {
         "quality": "High ⭐",
     },
 }
-
+"""
 def split_into_sentences(text, max_chunk_size=500):
     """
     Split text into sentences for streaming TTS.

@@ -10373,224 +10373,176 @@ def rerank_results(query: str, results: List, key_terms: List[str]) -> List:
 # ============================================================
 # 🎨 SENTIENT EMOJI SYSTEM
 # ============================================================
+import re
+from typing import List
 from collections import deque
-from functools import lru_cache
-
 
 class EmojiPersonality:
     """
-    OPTIMIZED: 5-10x faster emoji selection with pre-compiled patterns and caching.
+    A robust, universal emoji system that adapts to any topic.
+    Includes deterministic rotation, frequency control, and domain-aware detection.
     """
 
-    # Topic patterns with emojis
+    # 🌍 Universal Domain Mapping (Expanded)
     TOPIC_PATTERNS = {
         "science_tech": (
             r"\b(science|data|research|tech|technology|digital|ai|artificial intelligence|machine learning|space|math|physics|engine|system|logic|robot|code|software|hardware|algorithm|network)\b",
-            ["🔬", "💻", "🛰️", "🧬", "🧪", "⚙️", "🤖", "🧠", "📡", "🔍", "🖥️", "📊"],
+            ["🔬","💻","🛰️","🧬","🧪","⚙️","🤖","🧠","📡","🔍","🖥️","📊"]
         ),
+
         "programming": (
             r"\b(code|debug|python|javascript|java|compile|error|exception|syntax|api|backend|frontend|database|server|framework|deploy)\b",
-            ["🐍", "💻", "🛠️", "📦", "🧩", "⚡", "🔧", "📁", "📜", "🖥️", "🚀"],
+            ["🐍","💻","🛠️","📦","🧩","⚡","🔧","📁","📜","🖥️","🚀"]
         ),
+
         "gaming": (
             r"\b(game|gaming|player|level|quest|mission|battle|fps|rpg|strategy|console|xbox|playstation|nintendo|zelda|horizon|elden|fortnite|minecraft|pubg|call of duty|gta|grand theft auto)\b",
-            ["🎮", "🕹️", "🏆", "🔥", "⚔️", "🎯", "👾", "🛡️", "🎲", "💥"],
+            ["🎮","🕹️","🏆","🔥","⚔️","🎯","👾","🛡️","🎲","💥"]
         ),
+
         "nature_env": (
             r"\b(nature|weather|climate|environment|plant|animal|world|earth|ocean|green|energy|forest|wildlife|mountain|river)\b",
-            ["🌿", "🌍", "☀️", "🌊", "🌲", "🐾", "🌻", "🍃", "⛰️", "🌦️"],
+            ["🌿","🌍","☀️","🌊","🌲","🐾","🌻","🍃","⛰️","🌦️"]
         ),
+
         "business_finance": (
             r"\b(money|business|market|finance|growth|career|work|success|company|strategy|investment|profit|startup|economy|sales)\b",
-            ["📈", "💼", "💰", "🤝", "🚀", "📊", "🏦", "💹", "🧾", "📉"],
+            ["📈","💼","💰","🤝","🚀","📊","🏦","💹","🧾","📉"]
         ),
+
         "education_learning": (
             r"\b(learn|study|school|university|exam|knowledge|course|lesson|teach|training|skill|academic)\b",
-            ["📚", "🎓", "📝", "📖", "🧠", "✏️", "📘", "🏫", "📑"],
+            ["📚","🎓","📝","📖","🧠","✏️","📘","🏫","📑"]
         ),
+
         "health_wellbeing": (
             r"\b(health|fitness|food|mind|body|rest|wellness|safety|protection|balance|diet|exercise|sleep|medical)\b",
-            ["🥗", "💪", "🧠", "🧘", "🍎", "🛡️", "🏥", "💊", "❤️", "🩺"],
+            ["🥗","💪","🧠","🧘","🍎","🛡️","🏥","💊","❤️","🩺"]
         ),
+
         "humanities_arts": (
             r"\b(art|music|history|culture|society|literature|design|philosophy|creative|poetry|theatre|film|movie)\b",
-            ["🎨", "🎭", "🎻", "📜", "🏛️", "🖋️", "🎬", "🎼", "🖼️"],
+            ["🎨","🎭","🎻","📜","🏛️","🖋️","🎬","🎼","🖼️"]
         ),
+
         "storytelling": (
             r"\b(story|narrative|plot|character|tale|emotional|journey|survival|connection|experience)\b",
-            ["📖", "🎭", "💔", "✨", "🌟", "💫", "🎬"],
+            ["📖","🎭","💔","✨","🌟","💫","🎬"]
         ),
+
         "adventure": (
             r"\b(adventure|explore|quest|journey|discover|open.world|vast|beautiful)\b",
-            ["🗺️", "🌄", "⛰️", "🧭", "🎒", "✨", "🌍"],
+            ["🗺️","🌄","⛰️","🧭","🎒","✨","🌍"]
         ),
+
         "action": (
             r"\b(action|combat|fight|battle|mechanics|gameplay|hunt|rpg|shooter|multiplayer|campaign)\b",
-            ["⚔️", "🎯", "💥", "🔥", "🛡️", "⚡", "🏹"],
+            ["⚔️","🎯","💥","🔥","🛡️","⚡","🏹"]
         ),
+
         "creative_build": (
             r"\b(build|create|sandbox|blocky|craft|construct|resource|treasure)\b",
-            ["🏗️", "🧱", "⛏️", "💎", "🎨", "🔨"],
+            ["🏗️","🧱","⛏️","💎","🎨","🔨"]
         ),
+
         "survival": (
             r"\b(survive|survival|last one standing|realistic|intense)\b",
-            ["🎯", "💪", "🏆", "⚠️"],
+            ["🎯","💪","🏆","⚠️"]
         ),
+
         "communication": (
             r"\b(talk|discuss|media|news|write|speak|question|social|connection|community|message|email|chat|conversation)\b",
-            ["🗣️", "📱", "🌐", "📢", "💬", "✉️", "📡", "🤝"],
+            ["🗣️","📱","🌐","📢","💬","✉️","📡","🤝"]
         ),
+
         "travel": (
             r"\b(travel|trip|journey|flight|hotel|vacation|tour|explore|destination|adventure)\b",
-            ["✈️", "🌍", "🧳", "🏖️", "🗺️", "🚗", "🚆", "🏕️"],
+            ["✈️","🌍","🧳","🏖️","🗺️","🚗","🚆","🏕️"]
         ),
+
         "relationships": (
             r"\b(friend|family|relationship|partner|love|support|trust|together|team)\b",
-            ["❤️", "🤝", "👨‍👩‍👧‍👦", "💞", "💬", "🌟", "🫶"],
-        ),
+            ["❤️","🤝","👨‍👩‍👧‍👦","💞","💬","🌟","🫶"]
+        )
     }
 
+    # 💭 Expanded Emotion Mapping
     EMOTIONS = {
         "positive": (
             r"\b(good|great|awesome|happy|excellent|perfect|love|enjoy|solved|done|success|amazing|fantastic|brilliant|incredible|masterpiece|critically acclaimed|popular|highly rated)\b",
-            ["✨", "✅", "🎉", "🌟", "👍", "💯", "🔥", "🙌", "🥳"],
+            ["✨","✅","🎉","🌟","👍","💯","🔥","🙌","🥳"]
         ),
+
         "thoughtful": (
             r"\b(think|understand|consider|why|how|analyze|perspective|concept|idea|reflect|explore|evaluate|thought.provoking)\b",
-            ["🤔", "💭", "💡", "🧩", "🔍", "📌", "🧐", "📎"],
+            ["🤔","💭","💡","🧩","🔍","📌","🧐","📎"]
         ),
+
         "cautionary": (
             r"\b(but|however|risk|issue|problem|error|careful|warning|difficult|complex|challenge|concern|keep in mind)\b",
-            ["⚠️", "😬", "👀", "❗", "🛑", "🚧", "🔎"],
+            ["⚠️","😬","👀","❗","🛑","🚧","🔎"]
         ),
+
         "curious": (
             r"\b(curious|interesting|wonder|discover|explore|intriguing|mysterious)\b",
-            ["🧐", "🔎", "✨", "👁️", "📡", "🧠"],
+            ["🧐","🔎","✨","👁️","📡","🧠"]
         ),
+
         "serious": (
             r"\b(important|critical|essential|significant|major|key|vital)\b",
-            ["📌", "❗", "🔑", "⚖️", "📍"],
+            ["📌","❗","🔑","⚖️","📍"]
         ),
+
         "engaging": (
             r"\b(engaging|compelling|captivating|immersive|rich|powerful|unique|innovative|addictive|colorful)\b",
-            ["🎯", "✨", "🌟", "💎", "🔥"],
+            ["🎯","✨","🌟","💎","🔥"]
         ),
+
         "fun": (
             r"\b(fun|exciting|enjoy|classic|following)\b",
-            ["🎉", "😄", "🎊", "🌈"],
-        ),
+            ["🎉","😄","🎊","🌈"]
+        )
     }
 
     POSITIONAL = {
-        "opening": ["👋", "✨", "🎯", "💡", "🚀", "🌟"],
-        "closing": ["✅", "🏁", "🙌", "👍", "🎉", "💬"],
-        "generic": ["🔹", "📍", "✨", "➡️"],
+        "opening": ["👋","✨","🎯","💡","🚀","🌟"],
+        "closing": ["✅","🏁","🙌","👍","🎉","💬"],
+        "generic": ["🔹","📍","✨","➡️"]
     }
 
     MODE_SETTINGS = {
         "formal": {"sentences_per_emoji": 5, "max_per_block": 1, "list_emojis": 1},
         "balanced": {"sentences_per_emoji": 3, "max_per_block": 2, "list_emojis": 1},
-        "playful": {"sentences_per_emoji": 2, "max_per_block": 3, "list_emojis": 1},
+        "playful": {"sentences_per_emoji": 2, "max_per_block": 3, "list_emojis": 1}
     }
 
     def __init__(self, mode: str = "balanced"):
         self.mode = mode
         self.rotation_index = {}
         self.used_emojis = deque(maxlen=15)
-
-        # ⚡ OPTIMIZATION 1: Pre-compile all regex patterns
-        self.compiled_topics = {
-            name: (re.compile(pattern, re.IGNORECASE), emojis)
-            for name, (pattern, emojis) in self.TOPIC_PATTERNS.items()
-        }
-
-        self.compiled_emotions = {
-            name: (re.compile(pattern, re.IGNORECASE), emojis)
-            for name, (pattern, emojis) in self.EMOTIONS.items()
-        }
-
-        # ⚡ OPTIMIZATION 2: Create quick keyword lookup for fast path
-        self._build_keyword_index()
-
         self.reset()
-
-    def _build_keyword_index(self):
-        """Build a simple keyword index for ultra-fast matching of common terms."""
-        self.keyword_map = {}
-
-        # Extract first keyword from each pattern for quick checks
-        common_keywords = {
-            "code": "programming",
-            "game": "gaming",
-            "science": "science_tech",
-            "money": "business_finance",
-            "learn": "education_learning",
-            "health": "health_wellbeing",
-            "art": "humanities_arts",
-        }
-
-        self.keyword_map = common_keywords
 
     def reset(self):
         self.emoji_count = 0
         self.rotation_index = {}
-        # Clear the cache when resetting
-        self.get_emoji_cached.cache_clear()
-
-    @lru_cache(maxsize=256)  # ⚡ OPTIMIZATION 3: Cache emoji lookups
-    def get_emoji_cached(self, text_hash: str, pos: str = "generic") -> str:
-        """
-        Cached emoji selection - avoids re-processing identical text.
-        Note: This uses the hash because you can't cache with unhashable types.
-        """
-        # This will be called by get_emoji with the actual text
-        # We just use this for the caching mechanism
-        return None  # Placeholder, actual logic in get_emoji
 
     def get_emoji(self, text: str, pos: str = "generic") -> str:
-        """
-        OPTIMIZED: Get contextually appropriate emoji with multiple speedups.
-        """
         text_lower = text.lower()
-
-        # ⚡ FAST PATH: Check simple keywords first
-        for keyword, category in self.keyword_map.items():
-            if keyword in text_lower:
-                compiled_pattern, pool = self.compiled_topics[category]
-                emoji = self._rotate(pool)
-                if emoji not in self.used_emojis:
-                    self.used_emojis.append(emoji)
-                    self.emoji_count += 1
-                    return emoji
-
-        # ⚡ NORMAL PATH: Use pre-compiled patterns
         candidates = []
 
-        # 1. Check topics with compiled patterns
-        for _, (compiled_pattern, pool) in self.compiled_topics.items():
-            if compiled_pattern.search(text_lower):
+        # 1. Topics (strongest weight)
+        for _, (pattern, pool) in self.TOPIC_PATTERNS.items():
+            if re.search(pattern, text_lower):
                 candidates.append((self._rotate(pool), 0.95))
-                if len(candidates) >= 3:  # ⚡ EARLY EXIT: Stop after 3 good matches
-                    break
 
-        # 2. Check emotions (only if we don't have enough candidates)
-        if len(candidates) < 2:
-            for _, (compiled_pattern, pool) in self.compiled_emotions.items():
-                if compiled_pattern.search(text_lower):
-                    candidates.append((self._rotate(pool), 0.85))
-                    if len(candidates) >= 3:  # ⚡ EARLY EXIT
-                        break
+        # 2. Emotions
+        for _, (pattern, pool) in self.EMOTIONS.items():
+            if re.search(pattern, text_lower):
+                candidates.append((self._rotate(pool), 0.85))
 
         # 3. Positional fallback
-        if not candidates:
-            candidates.append(
-                (
-                    self._rotate(self.POSITIONAL.get(pos, self.POSITIONAL["generic"])),
-                    0.5,
-                )
-            )
+        candidates.append((self._rotate(self.POSITIONAL.get(pos, self.POSITIONAL["generic"])), 0.5))
 
-        # Sort by weight and select best unused emoji
         candidates.sort(key=lambda x: x[1], reverse=True)
 
         for emoji, _ in candidates:
@@ -10608,217 +10560,243 @@ class EmojiPersonality:
     def _rotate(self, pool: List[str]) -> str:
         key = tuple(pool)
         idx = self.rotation_index.get(key, 0)
-        self.rotation_index[key] = (idx + 1) % len(pool)
+        self.rotation_index[key] = idx + 1
         return pool[idx % len(pool)]
 
 
 class SmartEmojiFormatter:
-    """
-    OPTIMIZED: Handles intelligent emoji insertion with better performance.
-    """
-
+    """Handles intelligent emoji insertion for paragraphs and lists."""
+    
     def __init__(self, handler: EmojiPersonality):
         self.handler = handler
-
-        # ⚡ Pre-compile regex patterns used in formatting
-        self.list_line_pattern = re.compile(r"^\s*(\d+\.|\*|-|•)\s+")
-        self.colon_line_pattern = re.compile(r"^\s*[A-Z][^:]{3,40}:\s+")
-        self.traditional_list_pattern = re.compile(r"^(\s*)(\d+\.|\*|-|•)(\s+)(.*)$")
-        self.colon_list_pattern = re.compile(r"^(\s*)([A-Z][^:]{3,40}:)(\s*)(.*)$")
-        self.sentence_split_pattern = re.compile(r"(?<=[.!?])\s+")
 
     def format(self, text: str, query: str = "") -> str:
         if not text:
             return text
-
+        
         self.handler.reset()
-
-        # Split into blocks
-        if "\n\n" in text:
-            blocks = text.split("\n\n")
+        
+        # Split into blocks - try double newlines first, then single
+        if '\n\n' in text:
+            blocks = text.split('\n\n')
         else:
+            # If no double newlines, split on single newlines but group related content
             blocks = self._smart_block_split(text)
-
+        
         formatted_blocks = []
-
+        
         for block in blocks:
             if not block.strip():
                 formatted_blocks.append(block)
                 continue
-
+            
             # Check if this block is a list
             if self._is_list_block(block):
                 formatted_block = self._format_list(block, query)
             else:
                 formatted_block = self._format_paragraph(block, query)
-
+            
             formatted_blocks.append(formatted_block)
-
-        # Rejoin with the same separator
-        if "\n\n" in text:
-            return "\n\n".join(formatted_blocks)
+        
+        # Rejoin with the same separator that was used
+        if '\n\n' in text:
+            return '\n\n'.join(formatted_blocks)
         else:
-            return "\n".join(formatted_blocks)
-
+            return '\n'.join(formatted_blocks)
+    
     def _smart_block_split(self, text: str) -> List[str]:
-        """Split text into blocks when there are no double newlines."""
-        lines = text.split("\n")
+        """
+        Split text into blocks when there are no double newlines.
+        Tries to group related content together.
+        """
+        lines = text.split('\n')
         blocks = []
         current_block = []
-
+        
         for i, line in enumerate(lines):
             current_block.append(line)
-
+            
+            # Check if next line starts a new "section"
             if i < len(lines) - 1:
                 next_line = lines[i + 1]
-
+                
+                # New block if:
+                # 1. Current line ends with sentence and next line is a list item or title
+                # 2. Current line is a list item and next line is not
                 is_current_list = self._is_list_line(line)
                 is_next_list = self._is_list_line(next_line)
-
+                
                 if is_current_list != is_next_list:
-                    blocks.append("\n".join(current_block))
+                    blocks.append('\n'.join(current_block))
                     current_block = []
-
+        
+        # Add remaining content
         if current_block:
-            blocks.append("\n".join(current_block))
-
+            blocks.append('\n'.join(current_block))
+        
         return blocks
-
+    
     def _is_list_line(self, line: str) -> bool:
-        """Check if a single line is a list item using pre-compiled patterns."""
-        return bool(self.list_line_pattern.match(line)) or bool(
-            self.colon_line_pattern.match(line)
-        )
-
+        """Check if a single line is a list item."""
+        return bool(re.match(r'^\s*(\d+\.|\*|-|•)\s+', line)) or \
+               bool(re.match(r'^\s*[A-Z][^:]{3,40}:\s+', line))
+    
     def _is_list_block(self, block: str) -> bool:
         """Check if a block contains list items."""
-        lines = block.strip().split("\n")
-
-        traditional_list_count = sum(
-            1 for line in lines if self.list_line_pattern.match(line)
-        )
-
-        colon_list_count = sum(
-            1 for line in lines if self.colon_line_pattern.match(line)
-        )
-
+        lines = block.strip().split('\n')
+        
+        # Count traditional list markers (1., *, -, •)
+        traditional_list_count = sum(1 for line in lines 
+                                     if re.match(r'^\s*(\d+\.|\*|-|•)\s+', line))
+        
+        # Count colon-based list items (Game Title: description)
+        colon_list_count = sum(1 for line in lines 
+                               if re.match(r'^\s*[A-Z][^:]{3,40}:\s+', line))
+        
         return (traditional_list_count > 0) or (colon_list_count >= 2)
-
+    
     def _format_list(self, block: str, query: str) -> str:
-        """Format a list block with emojis."""
-        lines = block.split("\n")
+        """Format a list block with multiple emojis per list item."""
+        lines = block.split('\n')
         formatted_lines = []
         settings = self.handler.MODE_SETTINGS[self.handler.mode]
-
+        
         for line in lines:
             if not line.strip():
                 formatted_lines.append(line)
                 continue
-
-            # Use pre-compiled patterns
-            traditional_match = self.traditional_list_pattern.match(line)
-            colon_match = self.colon_list_pattern.match(line)
-
+            
+            # Check for traditional list markers (1., *, -, •)
+            traditional_match = re.match(r'^(\s*)(\d+\.|\*|-|•)(\s+)(.*)$', line)
+            
+            # Check for colon-based list items (Fortnite: A battle royale...)
+            colon_match = re.match(r'^(\s*)([A-Z][^:]{3,40}:)(\s*)(.*)$', line)
+            
             if traditional_match:
                 indent, marker, space, content = traditional_match.groups()
                 segments = self._split_list_content(content)
-                formatted_content = self._add_emojis_to_segments(
-                    segments, query, settings["list_emojis"]
-                )
+                formatted_content = self._add_emojis_to_segments(segments, query, settings["list_emojis"])
                 line = f"{indent}{marker}{space}{formatted_content}"
-
+            
             elif colon_match:
                 indent, title_with_colon, space, content = colon_match.groups()
                 segments = self._split_list_content(content)
-                formatted_content = self._add_emojis_to_segments(
-                    segments, query, settings["list_emojis"]
-                )
+                formatted_content = self._add_emojis_to_segments(segments, query, settings["list_emojis"])
                 line = f"{indent}{title_with_colon}{space}{formatted_content}"
-
+            
             formatted_lines.append(line)
-
-        return "\n".join(formatted_lines)
-
-    def _add_emojis_to_segments(
-        self, segments: List[str], query: str, emoji_count: int
-    ) -> str:
+        
+        return '\n'.join(formatted_lines)
+    
+    def _add_emojis_to_segments(self, segments: List[str], query: str, emoji_count: int) -> str:
         """Add emojis to list item segments."""
         formatted_segments = []
-
+        
         for i, segment in enumerate(segments):
             if i < emoji_count and segment.strip():
                 emoji = self.handler.get_emoji(segment + " " + query, "generic")
                 formatted_segments.append(f"{segment.rstrip()} {emoji}")
             else:
                 formatted_segments.append(segment)
-
+        
         return " ".join(formatted_segments)
-
+    
     def _split_list_content(self, content: str) -> List[str]:
-        """Split list item content into segments."""
+        """
+        Split list item content into meaningful segments for emoji placement.
+        """
         segments = []
-
-        if ". " in content and content.count(". ") <= 2:
-            sentence_parts = [s.strip() + "." for s in content.split(". ") if s.strip()]
-            if sentence_parts and not content.endswith("."):
-                sentence_parts[-1] = sentence_parts[-1].rstrip(".")
+        
+        # Strategy 1: Split on period + space (sentences within the description)
+        if '. ' in content and content.count('. ') <= 2:
+            # Split into sentences, but recombine if we get too many segments
+            sentence_parts = [s.strip() + '.' for s in content.split('. ') if s.strip()]
+            # Remove the extra period from the last one
+            if sentence_parts and not content.endswith('.'):
+                sentence_parts[-1] = sentence_parts[-1].rstrip('.')
             segments = sentence_parts
-
-        elif "(" in content and ")" in content:
-            paren_split = re.split(r"(\([^)]+\))", content)
+        
+        # Strategy 2: Split on parentheses (Available on PC, consoles, mobile)
+        elif '(' in content and ')' in content:
+            paren_split = re.split(r'(\([^)]+\))', content)
             segments = [s.strip() for s in paren_split if s.strip()]
-
-        elif "," in content:
-            segments = [s.strip() for s in content.split(",") if s.strip()]
-
+        
+        # Strategy 3: Split on comma
+        elif ',' in content:
+            segments = [s.strip() for s in content.split(',') if s.strip()]
+        
+        # Strategy 4: Split at midpoint if no clear separators
         else:
             mid = len(content) // 2
-            space_idx = content.find(" ", mid)
+            space_idx = content.find(' ', mid)
             if space_idx > 0:
                 segments = [content[:space_idx], content[space_idx:]]
             else:
                 segments = [content]
-
+        
         return segments
-
+    
     def _format_paragraph(self, paragraph: str, query: str) -> str:
-        """Format a paragraph with emojis."""
+        """Format a paragraph with emojis distributed across sentences."""
         settings = self.handler.MODE_SETTINGS[self.handler.mode]
-
-        # Use pre-compiled pattern for sentence splitting
-        sentences = self.sentence_split_pattern.split(paragraph.strip())
-
+        
+        # Split into sentences
+        sentences = re.split(r'(?<=[.!?])\s+', paragraph.strip())
+        
         if len(sentences) <= 1:
             return paragraph
-
+        
         formatted_sentences = []
         emojis_added = 0
-
+        
         for i, sentence in enumerate(sentences):
+            # Skip very short sentences
             if len(sentence.strip()) < 15:
                 formatted_sentences.append(sentence)
                 continue
-
+            
+            # Determine position
             pos = "generic"
             if i == 0:
                 pos = "opening"
             elif i == len(sentences) - 1 and len(sentences) > 3:
                 pos = "closing"
-
+            
+            # Add emoji based on interval and max per block
             should_add = (
-                i % settings["sentences_per_emoji"] == 0
-                and emojis_added < settings["max_per_block"]
+                i % settings["sentences_per_emoji"] == 0 and
+                emojis_added < settings["max_per_block"]
             )
-
+            
             if should_add:
                 emoji = self.handler.get_emoji(sentence + " " + query, pos)
                 sentence = f"{sentence.rstrip()} {emoji}"
                 emojis_added += 1
-
+            
             formatted_sentences.append(sentence)
+        
+        return ' '.join(formatted_sentences)
 
-        return " ".join(formatted_sentences)
 
+# --------------------------------------------------
+# ✅ Usage Function
+# --------------------------------------------------
+
+def add_contextual_emojis(text: str, query: str = "", mode: str = "playful") -> str:
+    """
+    Add contextual emojis to text with list-aware formatting.
+    
+    Args:
+        text: The text to format
+        query: User query for context
+        mode: 'formal', 'balanced', or 'playful'
+    
+    Returns:
+        Formatted text with contextually relevant emojis
+    """
+    handler = EmojiPersonality(mode)
+    formatter = SmartEmojiFormatter(handler)
+    return formatter.format(text, query)
 
 # ========================================
 # USAGE FUNCTION (same API as before)

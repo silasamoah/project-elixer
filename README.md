@@ -1,6 +1,6 @@
 # Project Elixer 🤖
 
-A local AI assistant with RAG (Retrieval-Augmented Generation), PDF document search, web search, and voice I/O — powered by a local LLaMA-compatible model (Multi model) and optional Google Gemini.
+A local AI assistant with RAG (Retrieval-Augmented Generation), PDF document search, web search, and voice I/O — powered by a local LLaMA-compatible model (Multi model Support) and optional Google Gemini.
 
 ---
 
@@ -141,6 +141,25 @@ If you cloned this from an older version with paths like `C:\Users\User-Name\...
 ## Environment Variables Reference
 
 See [`.env.example`](.env.example) for the full list with descriptions.
+
+## Example Correct .env Pattern
+
+GEMINI_API_KEY=your_gemini_api_key_here
+
+MODEL_PATH=C:/Users/user/Downloads/Llama-3.1-8B-Instruct-Q4_K_M.gguf
+
+PIPER_VOICES_DIR=C:/Users/user/Downloads/voices
+PIPER_EXECUTABLE=C:/Users/user/Downloads/piper/piper.exe
+
+TESSERACT_CMD=C:/Program Files/Tesseract-OCR/tesseract.exe
+
+FLASK_HOST=0.0.0.0
+FLASK_PORT=5000
+FLASK_DEBUG=false
+
+HF_HOME=./hf_cache
+TRANSFORMERS_OFFLINE=1
+HF_HUB_OFFLINE=1
 
 | Variable           | Required | Description                              |
 | ------------------ | -------- | ---------------------------------------- |
