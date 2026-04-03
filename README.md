@@ -178,9 +178,9 @@ HF_HUB_OFFLINE=1
 
 ## Screenshot
 
-```bash
+
 <img width="1897" height="919" alt="image" src="https://github.com/user-attachments/assets/d9a4f7e0-5dd5-4da9-ad9a-942170499710" />
-```
+
 
 ## License
 
