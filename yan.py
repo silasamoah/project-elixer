@@ -11248,30 +11248,6 @@ def humanize_code_response(text: str) -> str:
 
     return "".join(output)
 
-
-def _is_repeated_question(query: str, chat_history: list, lookback: int = 5) -> bool:
-    """
-    Returns True if the user is re-asking a question from recent history.
-    Prevents repeat questions from being routed as follow-ups.
-    """
-    if not chat_history:
-        return False
-    q_norm = query.lower().strip().rstrip("?").strip()
-    for turn in chat_history[-lookback:]:
-        prev = turn.get("user", "").lower().strip().rstrip("?").strip()
-        # Exact or near-exact match
-        if q_norm == prev:
-            return True
-        # High overlap (>80% of words shared)
-        q_words = set(q_norm.split())
-        p_words = set(prev.split())
-        if q_words and p_words:
-            overlap = len(q_words & p_words) / max(len(q_words), len(p_words))
-            if overlap > 0.80:
-                return True
-    return False
-
-
 # ============================================================
 # 🚀 AUTO-ACTIVATION LAYER (SAFE, NON-DESTRUCTIVE)
 # ============================================================
@@ -11315,13 +11291,7 @@ def build_prompt(
         intent_result = INTENT_CLASSIFIER.classify(query, chat_history)
         intent_enum = intent_result.intent
         intent = intent_enum.value
-        is_repeated = _is_repeated_question(query, chat_history)
-        is_followup = (
-            intent_enum in (QueryIntent.FOLLOWUP, QueryIntent.META_QUESTION)
-            and not is_repeated  # repeated questions go to PRIORITY 3 for a fresh answer
-        )
-        if is_repeated:
-            debug_log(f"🔁 Repeated question detected — routing as new question")
+        is_followup = intent_enum in (QueryIntent.FOLLOWUP, QueryIntent.META_QUESTION)
         is_meta = intent_enum == QueryIntent.META_QUESTION
 
         debug_log(f"🎯 Intent: {intent} | Follow-up: {is_followup}")
