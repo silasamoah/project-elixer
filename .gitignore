@@ -58,6 +58,10 @@ debug_log.txt
 *.log
 saved_chats.json
 
+yan - Copy.py
+flask_server - Copy.py
+index - Copy.html
+
 # ============================================================
 # Database files (SQLite)
 # ============================================================
