@@ -22,7 +22,7 @@ A local AI assistant with RAG (Retrieval-Augmented Generation), PDF document sea
 ### 1. Clone the repo
 
 ```bash
-git clone https://github.com/your-username/project-elixer.git
+git clone https://github.com/silasamoah/project-elixer.git
 cd project-elixer
 ```
 
