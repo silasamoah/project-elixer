@@ -17,6 +17,12 @@ A local AI assistant with RAG (Retrieval-Augmented Generation), PDF document sea
 
 ---
 
+## Screenshot
+
+<img width="1897" height="919" alt="image" src="https://github.com/user-attachments/assets/d9a4f7e0-5dd5-4da9-ad9a-942170499710" />
+
+---
+
 ## Quick Start
 
 ### 1. Clone the repo
@@ -175,12 +181,6 @@ HF_HUB_OFFLINE=1
 | `FLASK_PORT`       | No       | Server port (default: 5000)              |
 
 ---
-
-## Screenshot
-
-
-<img width="1897" height="919" alt="image" src="https://github.com/user-attachments/assets/d9a4f7e0-5dd5-4da9-ad9a-942170499710" />
-
 
 ## License
 
